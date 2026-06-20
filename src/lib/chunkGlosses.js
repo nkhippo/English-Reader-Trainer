@@ -1,5 +1,6 @@
 /**
  * Fallback glosses when chunks_master translations are not yet enriched.
+ * Prefer API values from en_translation / ja_translation once batches complete.
  */
 const CHUNK_GLOSSES = {
   'look at': { ja: '見る', en: 'to direct your eyes toward something' },

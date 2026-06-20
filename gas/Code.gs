@@ -3,14 +3,16 @@
  *
  * Script Properties:
  *   SPREADSHEET_ID, DRIVE_ROOT_ID
- *   ANTHROPIC_API_KEY — for ja_translation batch (enrichTranslationsBatch)
+ *   ANTHROPIC_API_KEY — for ja_translation / en_translation batches
  *   USE_DYNAMIC_PASSAGES — set to "true" to enable Claude passage generation (Phase 4)
  *
  * Manual setup (Apps Script editor):
  *   1. setupSheets() — once
  *   2. importChunksFromCefr() — after cefr_*.json in Drive shared/
  *   3. enrichAllTranslations() — runs until remaining = 0 (auto-continues via trigger if needed)
- *   4. Redeploy Web App after code changes
+ *   4. migrateChunksAddEnTranslationColumn() — once on existing spreadsheets
+ *   5. enrichAllEnglishGlosses() — runs until remaining = 0
+ *   6. Redeploy Web App after code changes
  */
 
 const SHEET_NAMES = {
@@ -22,7 +24,7 @@ const SHEET_NAMES = {
 
 const SHEET_HEADERS = {
   [SHEET_NAMES.CHUNKS]: [
-    'chunk_id', 'text', 'type', 'cefr', 'pos', 'ja_translation',
+    'chunk_id', 'text', 'type', 'cefr', 'pos', 'ja_translation', 'en_translation',
     'example_sentence', 'audio_drive_url', 'created_at',
   ],
   [SHEET_NAMES.PROGRESS]: [
@@ -47,6 +49,7 @@ const ENRICH_BATCH_SIZE = 25;
 const ENRICH_MAX_RUNTIME_MS = 5.5 * 60 * 1000;
 const ENRICH_CONTINUE_DELAY_MS = 30 * 1000;
 const ENRICH_CONTINUE_HANDLER = 'enrichAllTranslationsContinue_';
+const ENRICH_EN_CONTINUE_HANDLER = 'enrichAllEnglishGlossesContinue_';
 
 // ===== HTTP =====
 
@@ -150,6 +153,7 @@ function buildChunkRow_(entry, type, pos, example, now) {
     type,
     entry.cefr,
     pos || entry.pos || '',
+    '',
     '',
     example || entry.example || '',
     '',
@@ -371,6 +375,230 @@ function countMissingTranslations_() {
   let count = 0;
   for (let r = 1; r < data.length; r++) {
     if (!String(data[r][jaCol] || '').trim()) count++;
+  }
+  return count;
+}
+
+// ===== Phase 2b: chunks_master schema + en_translation enrichment =====
+
+/** Add en_translation column to an existing chunks_master sheet (safe to run multiple times). */
+function migrateChunksAddEnTranslationColumn() {
+  ensureChunksEnTranslationColumn_();
+  return { ok: true };
+}
+
+function ensureChunksEnTranslationColumn_() {
+  const sheet = getSheet_(SHEET_NAMES.CHUNKS);
+  if (sheet.getLastRow() < 1) return false;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (headers.indexOf('en_translation') >= 0) return true;
+  const jaIdx = headers.indexOf('ja_translation');
+  if (jaIdx < 0) throw new Error('chunks_master: ja_translation column not found');
+  sheet.insertColumnAfter(jaIdx + 1);
+  sheet.getRange(1, jaIdx + 2).setValue('en_translation');
+  Logger.log('Added en_translation column to chunks_master.');
+  return true;
+}
+
+/** Process up to ENRICH_BATCH_SIZE rows missing en_translation. */
+function enrichEnglishGlossesBatch() {
+  return enrichEnglishGlossesBatch_(ENRICH_BATCH_SIZE);
+}
+
+/** Enrich all rows until en_translation remaining = 0 (auto-continues via trigger). */
+function enrichAllEnglishGlosses() {
+  clearEnrichEnglishContinueTriggers_();
+  return enrichAllEnglishGlossesRun_();
+}
+
+/** Trigger handler — do not run manually. */
+function enrichAllEnglishGlossesContinue_() {
+  return enrichAllEnglishGlossesRun_();
+}
+
+/** Cancel any scheduled English-gloss enrichment continuation. */
+function stopEnrichAllEnglishGlosses() {
+  clearEnrichEnglishContinueTriggers_();
+  const coverage = auditEnglishGlossCoverage();
+  Logger.log('English gloss enrichment continuation stopped.');
+  return { stopped: true, coverage };
+}
+
+function enrichAllEnglishGlossesRun_() {
+  const started = Date.now();
+  let totalProcessed = 0;
+  let batches = 0;
+  let last = { processed: 0, remaining: -1, done: false };
+
+  while (Date.now() - started < ENRICH_MAX_RUNTIME_MS) {
+    last = enrichEnglishGlossesBatch_(ENRICH_BATCH_SIZE);
+    totalProcessed += last.processed;
+    batches += 1;
+
+    if (last.remaining === 0) {
+      clearEnrichEnglishContinueTriggers_();
+      const result = {
+        processed: totalProcessed,
+        batches,
+        remaining: 0,
+        done: true,
+        continued: false,
+      };
+      Logger.log(JSON.stringify(result));
+      return result;
+    }
+
+    if (last.processed === 0) break;
+    Utilities.sleep(800);
+  }
+
+  const continued = last.remaining > 0;
+  if (continued) scheduleEnrichEnglishContinue_();
+
+  const result = {
+    processed: totalProcessed,
+    batches,
+    remaining: last.remaining,
+    done: !continued,
+    continued,
+    next_run_in_sec: continued ? ENRICH_CONTINUE_DELAY_MS / 1000 : 0,
+  };
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+function scheduleEnrichEnglishContinue_() {
+  clearEnrichEnglishContinueTriggers_();
+  ScriptApp.newTrigger(ENRICH_EN_CONTINUE_HANDLER)
+    .timeBased()
+    .after(ENRICH_CONTINUE_DELAY_MS)
+    .create();
+}
+
+function clearEnrichEnglishContinueTriggers_() {
+  ScriptApp.getProjectTriggers().forEach((trigger) => {
+    if (trigger.getHandlerFunction() === ENRICH_EN_CONTINUE_HANDLER) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+}
+
+/** Manual: report en_translation coverage on chunks_master. */
+function auditEnglishGlossCoverage() {
+  ensureChunksEnTranslationColumn_();
+  const sheet = getSheet_(SHEET_NAMES.CHUNKS);
+  const total = Math.max(0, sheet.getLastRow() - 1);
+  const remaining = countMissingEnglishGlosses_();
+  const result = {
+    total,
+    covered: total - remaining,
+    remaining,
+    percent: total ? Math.round(((total - remaining) / total) * 100) : 100,
+  };
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+function enrichEnglishGlossesBatch_(batchSize) {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set in Script Properties');
+
+  ensureChunksEnTranslationColumn_();
+  const sheet = getSheet_(SHEET_NAMES.CHUNKS);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const col = indexColumns_(headers);
+  const pending = [];
+
+  for (let r = 1; r < data.length && pending.length < batchSize; r++) {
+    const en = String(data[r][col.en_translation] || '').trim();
+    if (en) continue;
+    pending.push({
+      row: r + 1,
+      chunk_id: data[r][col.chunk_id],
+      text: data[r][col.text],
+      type: data[r][col.type],
+      cefr: data[r][col.cefr],
+      ja_translation: String(data[r][col.ja_translation] || '').trim(),
+    });
+  }
+
+  if (pending.length === 0) {
+    return { processed: 0, remaining: 0, done: true };
+  }
+
+  const enriched = callClaudeEnrichEnglish_(pending, apiKey);
+  enriched.forEach((item) => {
+    const row = pending.find((p) => p.chunk_id === item.chunk_id);
+    if (!row) return;
+    if (item.en_translation) {
+      sheet.getRange(row.row, col.en_translation + 1).setValue(item.en_translation);
+    }
+  });
+
+  const remaining = countMissingEnglishGlosses_();
+  return { processed: enriched.length, remaining, done: remaining === 0 };
+}
+
+function callClaudeEnrichEnglish_(items, apiKey) {
+  const input = items.map((i) => ({
+    chunk_id: i.chunk_id,
+    text: i.text,
+    type: i.type,
+    cefr: i.cefr,
+    ja_translation: i.ja_translation || null,
+  }));
+
+  const payload = {
+    model: ANTHROPIC_MODEL,
+    max_tokens: 4096,
+    messages: [{
+      role: 'user',
+      content: `You are an English lexicographer writing learner-friendly glosses for CEFR vocabulary items.
+For each item, provide:
+- en_translation: a concise English gloss (about 6-15 words)
+  - For single words: a brief definition using simple language
+  - For phrasal verbs / multi-word chunks: explain the meaning plainly (e.g. "to switch on a device")
+  - Match complexity to the CEFR level shown
+If ja_translation is provided, use it only as context. Write the gloss in English only.
+
+Return ONLY a JSON array, no markdown:
+[{"chunk_id":"...","en_translation":"..."}]
+
+Items:
+${JSON.stringify(input)}`,
+    }],
+  };
+
+  const res = UrlFetchApp.fetch(ANTHROPIC_API_URL, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true,
+  });
+
+  if (res.getResponseCode() !== 200) {
+    throw new Error(`Anthropic ${res.getResponseCode()}: ${res.getContentText().slice(0, 400)}`);
+  }
+
+  const body = JSON.parse(res.getContentText());
+  const text = body.content[0].text.trim();
+  const jsonStr = text.replace(/^```json?\s*/i, '').replace(/```\s*$/, '');
+  return JSON.parse(jsonStr);
+}
+
+function countMissingEnglishGlosses_() {
+  ensureChunksEnTranslationColumn_();
+  const sheet = getSheet_(SHEET_NAMES.CHUNKS);
+  const data = sheet.getDataRange().getValues();
+  const enCol = data[0].indexOf('en_translation');
+  let count = 0;
+  for (let r = 1; r < data.length; r++) {
+    if (!String(data[r][enCol] || '').trim()) count++;
   }
   return count;
 }
@@ -878,6 +1106,7 @@ function buildPassageOutput_(generated, chunks, index, band, progressMap) {
       char_start: tc.char_start,
       char_end: tc.char_end,
       ja_translation: resolveChunkJa_(row.text, row.ja_translation),
+      en_translation: resolveChunkEn_(row.text, row.en_translation),
       example_sentence: row.example_sentence || '',
       encounters: prog ? prog.encounter_count : 0,
       srs_stage: prog ? prog.srs_stage : 0,
@@ -905,6 +1134,7 @@ function hydratePassageFromJson_(json, index, band, progressMap) {
       text: row.text || tc.text,
       cefr: row.cefr || tc.cefr,
       ja_translation: resolveChunkJa_(row.text, row.ja_translation),
+      en_translation: resolveChunkEn_(row.text, row.en_translation),
       example_sentence: row.example_sentence || '',
       encounters: prog ? prog.encounter_count : 0,
       srs_stage: prog ? prog.srs_stage : 0,
@@ -1119,37 +1349,44 @@ function resolveChunkJa_(text, ja) {
   const trimmed = String(ja || '').trim();
   if (trimmed) return trimmed;
   const key = String(text || '').toLowerCase().trim();
-  return CHUNK_JA_FALLBACKS_[key] || '';
+  return CHUNK_GLOSS_FALLBACKS_[key] ? CHUNK_GLOSS_FALLBACKS_[key].ja : '';
 }
 
-/** Fallback glosses when chunks_master.ja_translation is not yet enriched. */
-var CHUNK_JA_FALLBACKS_ = {
-  'look at': '見る',
-  'pick up': '手に取る',
-  'a lot of': 'たくさんの',
-  'get up': '起きる',
-  'go out': '外出する',
-  'a little': '少し',
-  'turn on': 'つける／オンにする',
-  'sit down': '座る',
-  'a few': 'いくつかの／少しの',
-  'managed to': 'なんとか〜することができた',
-  'picked up': '手に取る／拾い上げる',
-  'turned out': '結果的に〜だった／判明した',
-  'ran into': '偶然出会う／ばったり会う',
-  'caught up': '近況を語り合う',
-  'spoke up': '発言する／声を上げる',
-  'laid out': '整然と提示する／詳しく説明する',
-  'come up with': '思いつく／考え出す',
-  'carried out': '実行する／行う',
-  'drew up': '作成する／まとめる',
-  'bring about': 'もたらす／引き起こす',
-  'set out': '〜しようと取り組む',
-  'bear out': '裏付ける',
-  'shed light on': '明らかにする',
-  'points out': '指摘する',
-  'overlooked': '見落とした',
-  'follow through': '最後まで実行する',
+function resolveChunkEn_(text, en) {
+  const trimmed = String(en || '').trim();
+  if (trimmed) return trimmed;
+  const key = String(text || '').toLowerCase().trim();
+  return CHUNK_GLOSS_FALLBACKS_[key] ? CHUNK_GLOSS_FALLBACKS_[key].en : '';
+}
+
+/** Fallback glosses when chunks_master translations are not yet enriched. */
+var CHUNK_GLOSS_FALLBACKS_ = {
+  'look at': { ja: '見る', en: 'to direct your eyes toward something' },
+  'pick up': { ja: '手に取る', en: 'to lift or take something with your hands' },
+  'a lot of': { ja: 'たくさんの', en: 'many; a large amount of' },
+  'get up': { ja: '起きる', en: 'to rise from bed or a seated position' },
+  'go out': { ja: '外出する', en: 'to leave home for an activity' },
+  'a little': { ja: '少し', en: 'a small amount; slightly' },
+  'turn on': { ja: 'つける／オンにする', en: 'to switch on (a light, device, etc.)' },
+  'sit down': { ja: '座る', en: 'to take a seat' },
+  'a few': { ja: 'いくつかの／少しの', en: 'a small number of' },
+  'managed to': { ja: 'なんとか〜することができた', en: 'to succeed in doing something difficult' },
+  'picked up': { ja: '手に取る／拾い上げる', en: 'to take hold of; to collect' },
+  'turned out': { ja: '結果的に〜だった／判明した', en: 'to prove to be; to end up being' },
+  'ran into': { ja: '偶然出会う／ばったり会う', en: 'to meet someone by chance' },
+  'caught up': { ja: '近況を語り合う', en: 'to share recent news with someone' },
+  'spoke up': { ja: '発言する／声を上げる', en: 'to express an opinion aloud' },
+  'laid out': { ja: '整然と提示する／詳しく説明する', en: 'to present or explain clearly' },
+  'come up with': { ja: '思いつく／考え出す', en: 'to think of; to devise' },
+  'carried out': { ja: '実行する／行う', en: 'to perform or complete (a task)' },
+  'drew up': { ja: '作成する／まとめる', en: 'to prepare in written form' },
+  'bring about': { ja: 'もたらす／引き起こす', en: 'to cause something to happen' },
+  'set out': { ja: '〜しようと取り組む', en: 'to begin with a specific aim' },
+  'bear out': { ja: '裏付ける', en: 'to support or confirm' },
+  'shed light on': { ja: '明らかにする', en: 'to clarify; to make clearer' },
+  'points out': { ja: '指摘する', en: 'to indicate or mention' },
+  'overlooked': { ja: '見落とした', en: 'failed to notice' },
+  'follow through': { ja: '最後まで実行する', en: 'to complete what was started' },
 };
 
 function enrichPassageTemplate_(tpl, index, band, progressMap) {
@@ -1163,6 +1400,7 @@ function enrichPassageTemplate_(tpl, index, band, progressMap) {
       text: row.text,
       cefr: row.cefr,
       ja_translation: resolveChunkJa_(row.text, row.ja_translation),
+      en_translation: resolveChunkEn_(row.text, row.en_translation),
       example_sentence: row.example_sentence || '',
       encounters: prog ? prog.encounter_count : 0,
       srs_stage: prog ? prog.srs_stage : 0,
@@ -1184,6 +1422,7 @@ function fallbackChunk_(text, band) {
     text,
     cefr: band === 'A1A2' ? 'A2' : band === 'B2' ? 'B2' : 'B1',
     ja_translation: '',
+    en_translation: '',
     example_sentence: '',
   };
 }
@@ -1208,6 +1447,7 @@ function loadChunksIndex_() {
   const sheet = getSheet_(SHEET_NAMES.CHUNKS);
   if (sheet.getLastRow() < 2) return {};
 
+  ensureChunksEnTranslationColumn_();
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
   const col = indexColumns_(headers);
@@ -1221,6 +1461,7 @@ function loadChunksIndex_() {
       text,
       cefr: data[r][col.cefr],
       ja_translation: data[r][col.ja_translation],
+      en_translation: col.en_translation !== undefined ? data[r][col.en_translation] : '',
       example_sentence: data[r][col.example_sentence],
     };
   }

@@ -117,11 +117,42 @@ auditTranslationCoverage()
 
 Returns `{ total, covered, remaining, percent }`.
 
-### 5. Verify
+### 5. Add English gloss column (existing spreadsheets)
+
+On spreadsheets created before `en_translation` was added, run once:
+
+```
+migrateChunksAddEnTranslationColumn()
+```
+
+### 6. Run English gloss batch
+
+```
+enrichAllEnglishGlosses()
+```
+
+Runs until `en_translation` `remaining: 0` (auto-continues like the Japanese batch).
+
+To cancel:
+
+```
+stopEnrichAllEnglishGlosses()
+```
+
+Single batch only: `enrichEnglishGlossesBatch()`
+
+Check coverage:
+
+```
+auditEnglishGlossCoverage()
+```
+
+### 7. Verify
 
 - GET the Web App URL → `{ "phase": 2, "chunks_master_count": 7100+ }`
 - App header: tap level pill → switch A1+A2 / B1 / B2
 - Marginalia shows `ja_translation` from sheet after enrich
+- Switch UI to EN — marginalia shows `en_translation` after English gloss batch
 
 ## Phase 3: SRS engine
 
