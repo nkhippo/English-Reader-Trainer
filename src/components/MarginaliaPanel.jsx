@@ -52,7 +52,7 @@ export function MarginaliaPanel({ chunk, isOpen, onClose, isFading, clozePending
         ) : (
           <div className="note">
             <span className="note__chunk">{chunk.text}</span>
-            <div className="note__translation">{chunk.ja}</div>
+            {chunk.ja ? <div className="note__translation">{chunk.ja}</div> : null}
             <hr className="note__rule" />
             <div className="note__meta">
               <div className="note__meta-item">

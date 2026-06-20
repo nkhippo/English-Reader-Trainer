@@ -860,7 +860,7 @@ function buildPassageOutput_(generated, chunks, index, band, progressMap) {
       cefr: row.cefr || tc.cefr,
       char_start: tc.char_start,
       char_end: tc.char_end,
-      ja_translation: String(row.ja_translation || '').trim(),
+      ja_translation: resolveChunkJa_(row.text, row.ja_translation),
       example_sentence: row.example_sentence || '',
       encounters: prog ? prog.encounter_count : 0,
       srs_stage: prog ? prog.srs_stage : 0,
@@ -887,7 +887,7 @@ function hydratePassageFromJson_(json, index, band, progressMap) {
       chunk_id: row.chunk_id || tc.chunk_id,
       text: row.text || tc.text,
       cefr: row.cefr || tc.cefr,
-      ja_translation: String(row.ja_translation || '').trim(),
+      ja_translation: resolveChunkJa_(row.text, row.ja_translation),
       example_sentence: row.example_sentence || '',
       encounters: prog ? prog.encounter_count : 0,
       srs_stage: prog ? prog.srs_stage : 0,
@@ -1098,6 +1098,43 @@ function getPassageTemplatesForBand_(band) {
   return T[band] || T.B1;
 }
 
+function resolveChunkJa_(text, ja) {
+  const trimmed = String(ja || '').trim();
+  if (trimmed) return trimmed;
+  const key = String(text || '').toLowerCase().trim();
+  return CHUNK_JA_FALLBACKS_[key] || '';
+}
+
+/** Fallback glosses when chunks_master.ja_translation is not yet enriched. */
+var CHUNK_JA_FALLBACKS_ = {
+  'look at': '見る',
+  'pick up': '手に取る',
+  'a lot of': 'たくさんの',
+  'get up': '起きる',
+  'go out': '外出する',
+  'a little': '少し',
+  'turn on': 'つける／オンにする',
+  'sit down': '座る',
+  'a few': 'いくつかの／少しの',
+  'managed to': 'なんとか〜することができた',
+  'picked up': '手に取る／拾い上げる',
+  'turned out': '結果的に〜だった／判明した',
+  'ran into': '偶然出会う／ばったり会う',
+  'caught up': '近況を語り合う',
+  'spoke up': '発言する／声を上げる',
+  'laid out': '整然と提示する／詳しく説明する',
+  'come up with': '思いつく／考え出す',
+  'carried out': '実行する／行う',
+  'drew up': '作成する／まとめる',
+  'bring about': 'もたらす／引き起こす',
+  'set out': '〜しようと取り組む',
+  'bear out': '裏付ける',
+  'shed light on': '明らかにする',
+  'points out': '指摘する',
+  'overlooked': '見落とした',
+  'follow through': '最後まで実行する',
+};
+
 function enrichPassageTemplate_(tpl, index, band, progressMap) {
   progressMap = progressMap || {};
   const target_chunks = tpl.chunk_texts.map((text) => {
@@ -1108,7 +1145,7 @@ function enrichPassageTemplate_(tpl, index, band, progressMap) {
       chunk_id: row.chunk_id,
       text: row.text,
       cefr: row.cefr,
-      ja_translation: String(row.ja_translation || '').trim(),
+      ja_translation: resolveChunkJa_(row.text, row.ja_translation),
       example_sentence: row.example_sentence || '',
       encounters: prog ? prog.encounter_count : 0,
       srs_stage: prog ? prog.srs_stage : 0,
