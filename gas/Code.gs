@@ -9,7 +9,7 @@
  * Manual setup (Apps Script editor):
  *   1. setupSheets() — once
  *   2. importChunksFromCefr() — after cefr_*.json in Drive shared/
- *   3. enrichAllTranslations(10) — repeat until remaining = 0
+ *   3. enrichAllTranslations() — runs until remaining = 0 (auto-continues via trigger if needed)
  *   4. Redeploy Web App after code changes
  */
 
@@ -43,6 +43,10 @@ const SHEET_HEADERS = {
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001';
 const ENRICH_BATCH_SIZE = 25;
+/** Stop batching slightly before the 6-min GAS limit and chain a trigger. */
+const ENRICH_MAX_RUNTIME_MS = 5.5 * 60 * 1000;
+const ENRICH_CONTINUE_DELAY_MS = 30 * 1000;
+const ENRICH_CONTINUE_HANDLER = 'enrichAllTranslationsContinue_';
 
 // ===== HTTP =====
 
@@ -164,22 +168,97 @@ function writeRowsInBatches_(sheet, rows) {
 
 // ===== Phase 2: Claude ja_translation enrichment =====
 
-/** Process up to ENRICH_BATCH_SIZE rows missing ja_translation. Run repeatedly. */
+/** Process up to ENRICH_BATCH_SIZE rows missing ja_translation. */
 function enrichTranslationsBatch() {
   return enrichTranslationsBatch_(ENRICH_BATCH_SIZE);
 }
 
-/** Run multiple batches in one execution (respect 6-min limit). */
-function enrichAllTranslations(maxBatches) {
-  const limit = maxBatches || 8;
-  let last = { processed: 0, remaining: -1 };
-  for (let i = 0; i < limit; i++) {
+/**
+ * Enrich all chunks_master rows until remaining = 0.
+ * Runs as many batches as fit in one execution, then schedules itself to continue.
+ * Call stopEnrichAllTranslations() to cancel a queued continuation.
+ */
+function enrichAllTranslations() {
+  clearEnrichContinueTriggers_();
+  return enrichAllTranslationsRun_();
+}
+
+/** @deprecated Use enrichAllTranslations() — maxBatches is ignored; runs until done. */
+function enrichAllTranslationsLegacy(maxBatches) {
+  Logger.log('enrichAllTranslationsLegacy: use enrichAllTranslations() instead.');
+  return enrichAllTranslations();
+}
+
+/** Trigger handler — do not run manually. */
+function enrichAllTranslationsContinue_() {
+  return enrichAllTranslationsRun_();
+}
+
+/** Cancel any scheduled enrichment continuation. */
+function stopEnrichAllTranslations() {
+  clearEnrichContinueTriggers_();
+  const coverage = auditTranslationCoverage();
+  Logger.log('Enrichment continuation stopped.');
+  return { stopped: true, coverage };
+}
+
+function enrichAllTranslationsRun_() {
+  const started = Date.now();
+  let totalProcessed = 0;
+  let batches = 0;
+  let last = { processed: 0, remaining: -1, done: false };
+
+  while (Date.now() - started < ENRICH_MAX_RUNTIME_MS) {
     last = enrichTranslationsBatch_(ENRICH_BATCH_SIZE);
-    if (last.remaining === 0) break;
+    totalProcessed += last.processed;
+    batches += 1;
+
+    if (last.remaining === 0) {
+      clearEnrichContinueTriggers_();
+      const result = {
+        processed: totalProcessed,
+        batches,
+        remaining: 0,
+        done: true,
+        continued: false,
+      };
+      Logger.log(JSON.stringify(result));
+      return result;
+    }
+
+    if (last.processed === 0) break;
     Utilities.sleep(800);
   }
-  Logger.log(JSON.stringify(last));
-  return last;
+
+  const continued = last.remaining > 0;
+  if (continued) scheduleEnrichContinue_();
+
+  const result = {
+    processed: totalProcessed,
+    batches,
+    remaining: last.remaining,
+    done: !continued,
+    continued,
+    next_run_in_sec: continued ? ENRICH_CONTINUE_DELAY_MS / 1000 : 0,
+  };
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+function scheduleEnrichContinue_() {
+  clearEnrichContinueTriggers_();
+  ScriptApp.newTrigger(ENRICH_CONTINUE_HANDLER)
+    .timeBased()
+    .after(ENRICH_CONTINUE_DELAY_MS)
+    .create();
+}
+
+function clearEnrichContinueTriggers_() {
+  ScriptApp.getProjectTriggers().forEach((trigger) => {
+    if (trigger.getHandlerFunction() === ENRICH_CONTINUE_HANDLER) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
 }
 
 /** Manual: report ja_translation coverage on chunks_master. */

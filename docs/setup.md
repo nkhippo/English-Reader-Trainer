@@ -96,12 +96,18 @@ Imports ~7,100 entries (words + chunks) into `chunks_master`.
 ### 4. Run Japanese translation batch
 
 ```
-enrichAllTranslations(10)
+enrichAllTranslations()
 ```
 
-Run repeatedly until log shows `remaining: 0`.
+Runs batches until `remaining: 0`. If the 6-minute execution limit is reached, it **automatically schedules the next run** (~30 seconds later) and continues until complete. No manual re-runs needed.
 
-Or single batch: `enrichTranslationsBatch()`
+To cancel a queued continuation:
+
+```
+stopEnrichAllTranslations()
+```
+
+Single batch only: `enrichTranslationsBatch()`
 
 Check coverage anytime:
 

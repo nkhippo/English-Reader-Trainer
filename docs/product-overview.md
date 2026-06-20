@@ -179,7 +179,7 @@ Script Property **`USE_DYNAMIC_PASSAGES`** で切替。
 | タスク | 状態 |
 |--------|------|
 | `importChunksFromCefr()` | ✅ 7,125 件 |
-| `enrichAllTranslations(10)` → `remaining: 0` | 🔄 要確認・継続 |
+| `enrichAllTranslations()` → `remaining: 0` | 🔄 実行中（自動継続） |
 | GAS 再デプロイ + `USE_DYNAMIC_PASSAGES=true` | 運用中 |
 | 実際に読んで SRS データ蓄積 | 🔄 推奨 |
 
@@ -259,7 +259,7 @@ Phase 6  進捗ダッシュボード                  ⬜
 
 ### 運用（今すぐ）
 
-1. `enrichAllTranslations(10)` を `remaining: 0` まで実行
+1. `enrichAllTranslations()` を実行（`remaining: 0` まで自動継続）
 2. `USE_DYNAMIC_PASSAGES=true` で GAS を再デploy
 3. 1〜2 週間、実際に読み `user_progress` / `distinct_passages_count` の増加を確認
 
