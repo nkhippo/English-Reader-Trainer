@@ -432,6 +432,17 @@ html[lang='ja'] .note__meta {
   font-weight: 600;
 }
 
+.note__stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.note__stage-count {
+  font-variant-numeric: tabular-nums;
+  min-width: 2ch;
+}
+
 .stage-dots {
   display: inline-flex;
   gap: 4px;

@@ -37,7 +37,10 @@ export function MarginaliaPanel({ chunk, isOpen, onClose, isFading }) {
               </div>
               <div className="note__meta-item">
                 <span className="note__meta-label">{t.stage}</span>
-                <StageDots stage={chunk.stage} />
+                <span className="note__meta-value note__stage">
+                  <span className="note__stage-count">{t.stageProgress(chunk.stage)}</span>
+                  <StageDots stage={chunk.stage} />
+                </span>
               </div>
             </div>
             <div className="note__example">
