@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { MOCK_PASSAGES } from './data/mockPassages.js';
 import { useReader } from './hooks/useReader.js';
+import { usePassagePrefetch } from './hooks/usePassagePrefetch.js';
 import { Header } from './components/Header.jsx';
 import { PassageView } from './components/PassageView.jsx';
 import { MarginaliaPanel } from './components/MarginaliaPanel.jsx';
@@ -8,7 +9,7 @@ import { Footer } from './components/Footer.jsx';
 import { TranslationOverlay } from './components/TranslationOverlay.jsx';
 import { ProcessingOverlay } from './components/ProcessingOverlay.jsx';
 import { ReadingTimerBar } from './components/ReadingTimerBar.jsx';
-import { fetchGeneratePassage, fetchSession, fetchStats } from './lib/api.js';
+import { fetchSession, fetchStats } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
 import { USER_ID } from './lib/config.js';
@@ -30,12 +31,19 @@ function firstPassageFromResponse(res, band) {
   return filterMockByBand(band)[0] ?? null;
 }
 
+function randomMockPassage(band) {
+  const mock = filterMockByBand(band);
+  if (mock.length === 0) return null;
+  return mock[Math.floor(Math.random() * mock.length)];
+}
+
 export default function App() {
   const { t } = useI18n();
   const [cefrBand, setCefrBand] = useState(getStoredCefrBand);
   const [passages, setPassages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ reviewing: 0, graduated: 0 });
+  const advancePastEndRef = useRef(async () => false);
 
   const refreshStats = useCallback(async (band) => {
     try {
@@ -84,32 +92,35 @@ export default function App() {
     await refreshStats(cefrBand);
   }, [cefrBand, refreshStats]);
 
-  const handleAdvancePastEnd = useCallback(async () => {
-    try {
-      const res = await fetchGeneratePassage({ userId: USER_ID, cefr: cefrBand });
-      const normalized = normalizePassagesFromApi(res.passages || []);
-      if (normalized.length === 0) return false;
-      setPassages((prev) => [...prev, normalized[0]]);
+  const reader = useReader(passages, {
+    onProgressUpdate: handleProgressUpdate,
+    onAdvancePastEnd: () => advancePastEndRef.current(),
+  });
+
+  const { consumePrefetched } = usePassagePrefetch({
+    cefrBand,
+    currentPassageId: reader.passage?.id,
+    enabled: !loading && passages.length > 0,
+  });
+
+  useEffect(() => {
+    advancePastEndRef.current = async () => {
+      const next = await consumePrefetched();
+      if (next) {
+        setPassages((prev) => [...prev, next]);
+        return true;
+      }
+      const fallback = randomMockPassage(cefrBand);
+      if (!fallback) return false;
+      setPassages((prev) => [...prev, fallback]);
       return true;
-    } catch (err) {
-      console.error('[ERT] fetch next passage failed:', err);
-      const mock = filterMockByBand(cefrBand);
-      if (mock.length === 0) return false;
-      const next = mock[Math.floor(Math.random() * mock.length)];
-      setPassages((prev) => [...prev, next]);
-      return true;
-    }
-  }, [cefrBand]);
+    };
+  }, [cefrBand, consumePrefetched]);
 
   const handleCefrChange = (band) => {
     storeCefrBand(band);
     setCefrBand(band);
   };
-
-  const reader = useReader(passages, {
-    onProgressUpdate: handleProgressUpdate,
-    onAdvancePastEnd: handleAdvancePastEnd,
-  });
 
   if (loading && passages.length === 0) {
     return (
@@ -134,9 +145,11 @@ export default function App() {
         <PassageView
           passage={reader.passage}
           activeChunkId={reader.activeChunkId}
+          clozeChunkId={reader.clozeChunkId}
+          clozeRevealed={reader.clozeRevealed}
           isTransitioning={reader.isTransitioning}
           transitionDirection={reader.transitionDirection}
-          onChunkClick={reader.selectChunk}
+          onChunkClick={reader.handleChunkClick}
           onBackgroundClick={reader.showTranslation}
           onSwipeNext={() => reader.advanceToNext()}
           onSwipePrev={reader.prevPassage}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useI18n } from '../i18n/I18nProvider.jsx';
 
 function parsePassageText(text, chunks) {
   const parts = text.split(/(\{\{[^}]+\}\})/);
@@ -18,6 +19,8 @@ function parsePassageText(text, chunks) {
 export function PassageView({
   passage,
   activeChunkId,
+  clozeChunkId,
+  clozeRevealed,
   isTransitioning,
   transitionDirection,
   onChunkClick,
@@ -25,6 +28,7 @@ export function PassageView({
   onSwipeNext,
   onSwipePrev,
 }) {
+  const { t } = useI18n();
   const areaRef = useRef(null);
   const touchStartRef = useRef(null);
   const [fadingMarginalia, setFadingMarginalia] = useState(false);
@@ -80,22 +84,25 @@ export function PassageView({
         }}
       >
         <p>
-          {segments.map((seg) =>
-            seg.type === 'chunk' ? (
+          {segments.map((seg) => {
+            if (seg.type !== 'chunk') {
+              return <span key={seg.key}>{seg.content}</span>;
+            }
+            const isCloze = seg.chunk.id === clozeChunkId && !clozeRevealed;
+            return (
               <mark
                 key={seg.key}
-                className={`chunk ${activeChunkId === seg.chunk.id ? 'chunk--active' : ''}`}
+                className={`chunk ${activeChunkId === seg.chunk.id ? 'chunk--active' : ''} ${isCloze ? 'chunk--cloze' : ''}`}
+                aria-label={isCloze ? t.clozeReveal : undefined}
                 onClick={(e) => {
                   e.stopPropagation();
                   onChunkClick(seg.chunk.id);
                 }}
               >
-                {seg.chunk.text}
+                {isCloze ? '___' : seg.chunk.text}
               </mark>
-            ) : (
-              <span key={seg.key}>{seg.content}</span>
-            ),
-          )}
+            );
+          })}
         </p>
       </article>
     </section>

@@ -36,6 +36,7 @@ export const translations = {
     pauseHint: 'Reading is paused. Resume when you are ready to continue.',
     suspend: 'Pause',
     timeRemaining: (sec) => `${sec}s left`,
+    clozeReveal: 'Tap to reveal the hidden phrase',
   },
   ja: {
     reviewing: '復習中',
@@ -60,5 +61,6 @@ export const translations = {
     pauseHint: '中断中です。準備ができたら再開してください。',
     suspend: '中断',
     timeRemaining: (sec) => `残り ${sec} 秒`,
+    clozeReveal: 'タップして隠れた語句を表示',
   },
 };

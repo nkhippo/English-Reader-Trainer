@@ -103,6 +103,14 @@ Run repeatedly until log shows `remaining: 0`.
 
 Or single batch: `enrichTranslationsBatch()`
 
+Check coverage anytime:
+
+```
+auditTranslationCoverage()
+```
+
+Returns `{ total, covered, remaining, percent }`.
+
 ### 5. Verify
 
 - GET the Web App URL → `{ "phase": 2, "chunks_master_count": 7100+ }`

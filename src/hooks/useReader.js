@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logEncounter } from '../lib/api.js';
-import { READING_TIME_LIMIT_SEC, USER_ID } from '../lib/config.js';
+import { CLOZE_PROBABILITY, READING_TIME_LIMIT_SEC, USER_ID } from '../lib/config.js';
 
 const READING_TIME_LIMIT_MS = READING_TIME_LIMIT_SEC * 1000;
 const TRANSITION_MS = 200;
@@ -15,6 +15,8 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
   const [hardFlash, setHardFlash] = useState(false);
   const [actionsDisabled, setActionsDisabled] = useState(false);
   const [remainingSeconds, setRemainingSeconds] = useState(READING_TIME_LIMIT_SEC);
+  const [clozeChunkId, setClozeChunkId] = useState(null);
+  const [clozeRevealed, setClozeRevealed] = useState(false);
 
   const pageStartRef = useRef(Date.now());
   const translationTimerRef = useRef(null);
@@ -45,6 +47,23 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
     }
     passagesKeyRef.current = key;
   }, [passages]);
+
+  // Occasional cloze blank on one target chunk (pillar 5 — light recall)
+  useEffect(() => {
+    if (!passage?.chunks?.length) {
+      setClozeChunkId(null);
+      setClozeRevealed(false);
+      return;
+    }
+    if (Math.random() < CLOZE_PROBABILITY) {
+      const pick = passage.chunks[Math.floor(Math.random() * passage.chunks.length)];
+      setClozeChunkId(pick.id);
+      setClozeRevealed(false);
+    } else {
+      setClozeChunkId(null);
+      setClozeRevealed(false);
+    }
+  }, [currentIndex, passage]);
 
   const resetMarginalia = useCallback(() => {
     setActiveChunkId(null);
@@ -171,6 +190,17 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
     setMarginaliaOpen(true);
   }, []);
 
+  const handleChunkClick = useCallback(
+    (chunkId) => {
+      if (chunkId === clozeChunkId && !clozeRevealed) {
+        setClozeRevealed(true);
+        return;
+      }
+      selectChunk(chunkId);
+    },
+    [clozeChunkId, clozeRevealed, selectChunk],
+  );
+
   const closeMarginalia = useCallback(() => {
     setMarginaliaOpen(false);
     setActiveChunkId(null);
@@ -238,9 +268,12 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
     hardFlash,
     actionsDisabled,
     remainingSeconds,
+    clozeChunkId,
+    clozeRevealed,
     prevPassage,
     advanceToNext,
     selectChunk,
+    handleChunkClick,
     closeMarginalia,
     showTranslation,
     handleGotIt,

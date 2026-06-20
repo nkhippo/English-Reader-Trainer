@@ -324,6 +324,18 @@ button {
   box-shadow: 0 0 0 2px rgba(255, 224, 102, 0.4);
 }
 
+.chunk--cloze {
+  background: transparent;
+  border-bottom: 2px dashed var(--color-highlight-line);
+  color: var(--color-ink-muted, #6b6560);
+  font-style: italic;
+  letter-spacing: 0.08em;
+}
+
+.chunk--cloze:hover {
+  background: rgba(255, 224, 102, 0.35);
+}
+
 html[lang='ja'] .page-indicator {
   text-transform: none;
   letter-spacing: 0.06em;

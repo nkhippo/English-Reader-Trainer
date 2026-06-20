@@ -44,42 +44,6 @@ const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001';
 const ENRICH_BATCH_SIZE = 25;
 
-/** Glosses for template passage chunks when chunks_master ja_translation is empty. */
-const CHUNK_JA_FALLBACKS = {
-  'look at': '〜を見る',
-  'pick up': '手に取る／拾う',
-  'a lot of': 'たくさんの',
-  'get up': '起きる',
-  'go out': '外出する',
-  'a little': '少し',
-  'turn on': '〜をつける（電気など）',
-  'sit down': '座る',
-  'a few': 'いくつかの',
-  'managed to': 'なんとか〜することができた',
-  'picked up': '手に取る／拾い上げる',
-  'turned out': '結果的に〜だった／判明した',
-  'ran into': '偶然出会う／ばったり会う',
-  'caught up': '近況を話す',
-  'spoke up': '発言する／声を上げる',
-  'laid out': '詳しく説明する／提示する',
-  'come up with': '思いつく／考え出す',
-  'carried out': '実施する／行う',
-  'drew up': '作成する／まとめる',
-  'bring about': 'もたらす／引き起こす',
-  'set out': '〜し始める／取り組む',
-  'bear out': '裏付ける',
-  'shed light on': '〜を明らかにする',
-  'points out': '指摘する',
-  'overlooked': '見落とす',
-  'follow through': '最後まで実行する',
-};
-
-function resolveJaTranslation_(text, rowJa) {
-  const ja = String(rowJa || '').trim();
-  if (ja) return ja;
-  return CHUNK_JA_FALLBACKS[String(text).toLowerCase().trim()] || '';
-}
-
 // ===== HTTP =====
 
 function doPost(e) {
@@ -216,6 +180,21 @@ function enrichAllTranslations(maxBatches) {
   }
   Logger.log(JSON.stringify(last));
   return last;
+}
+
+/** Manual: report ja_translation coverage on chunks_master. */
+function auditTranslationCoverage() {
+  const sheet = getSheet_(SHEET_NAMES.CHUNKS);
+  const total = Math.max(0, sheet.getLastRow() - 1);
+  const remaining = countMissingTranslations_();
+  const result = {
+    total,
+    covered: total - remaining,
+    remaining,
+    percent: total ? Math.round(((total - remaining) / total) * 100) : 100,
+  };
+  Logger.log(JSON.stringify(result));
+  return result;
 }
 
 function enrichTranslationsBatch_(batchSize) {
@@ -672,6 +651,9 @@ function generateDynamicPassage_(userId, band, index, progressMap, excludePassag
       if (!validatePassageChunks_(generated.text, chunks)) {
         throw new Error('Generated passage missing target chunks');
       }
+      if (!validatePassageQuality_(generated)) {
+        throw new Error('Generated passage failed quality checks');
+      }
       const passage = buildPassageOutput_(generated, chunks, index, band, progressMap);
       if (excludePassageIds.indexOf(passage.passage_id) >= 0) {
         passage.passage_id = makePassageId_(chunks);
@@ -743,6 +725,29 @@ function validatePassageChunks_(text, chunks) {
   return chunks.every((c) => lower.indexOf(String(c.text).toLowerCase()) >= 0);
 }
 
+function validatePassageQuality_(generated) {
+  const text = String(generated.text || '').trim();
+  const ja = String(generated.ja_translation || '').trim();
+  if (!text || !ja) return false;
+
+  const sentences = text.split(/[.!?]+/).filter((s) => s.trim().length > 0);
+  if (sentences.length < 3 || sentences.length > 6) return false;
+
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length < 40 || words.length > 140) return false;
+
+  const targets = generated.target_chunks || [];
+  if (targets.length < 2) return false;
+
+  return targets.every((tc) => {
+    const start = Number(tc.char_start);
+    const end = Number(tc.char_end);
+    if (isNaN(start) || isNaN(end) || end <= start) return false;
+    const slice = text.slice(start, end);
+    return slice && slice.toLowerCase() === String(tc.text).toLowerCase();
+  });
+}
+
 function buildTextMarkupFromPositions_(text, targetChunks) {
   const sorted = targetChunks.slice().sort((a, b) => b.char_start - a.char_start);
   let markup = text;
@@ -776,7 +781,7 @@ function buildPassageOutput_(generated, chunks, index, band, progressMap) {
       cefr: row.cefr || tc.cefr,
       char_start: tc.char_start,
       char_end: tc.char_end,
-      ja_translation: resolveJaTranslation_(row.text || tc.text, row.ja_translation),
+      ja_translation: String(row.ja_translation || '').trim(),
       example_sentence: row.example_sentence || '',
       encounters: prog ? prog.encounter_count : 0,
       srs_stage: prog ? prog.srs_stage : 0,
@@ -803,7 +808,7 @@ function hydratePassageFromJson_(json, index, band, progressMap) {
       chunk_id: row.chunk_id || tc.chunk_id,
       text: row.text || tc.text,
       cefr: row.cefr || tc.cefr,
-      ja_translation: resolveJaTranslation_(row.text || tc.text, row.ja_translation),
+      ja_translation: String(row.ja_translation || '').trim(),
       example_sentence: row.example_sentence || '',
       encounters: prog ? prog.encounter_count : 0,
       srs_stage: prog ? prog.srs_stage : 0,
@@ -1024,7 +1029,7 @@ function enrichPassageTemplate_(tpl, index, band, progressMap) {
       chunk_id: row.chunk_id,
       text: row.text,
       cefr: row.cefr,
-      ja_translation: resolveJaTranslation_(text, row.ja_translation),
+      ja_translation: String(row.ja_translation || '').trim(),
       example_sentence: row.example_sentence || '',
       encounters: prog ? prog.encounter_count : 0,
       srs_stage: prog ? prog.srs_stage : 0,
