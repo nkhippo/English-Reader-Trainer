@@ -3,6 +3,7 @@ import { logEncounter } from '../lib/api.js';
 import { READING_TIME_LIMIT_SEC, USER_ID } from '../lib/config.js';
 
 const READING_TIME_LIMIT_MS = READING_TIME_LIMIT_SEC * 1000;
+const TRANSITION_MS = 200;
 
 export function useReader(passages, { onProgressUpdate } = {}) {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -13,6 +14,8 @@ export function useReader(passages, { onProgressUpdate } = {}) {
   const [translationVisible, setTranslationVisible] = useState(false);
   const [hardFlash, setHardFlash] = useState(false);
   const [actionsDisabled, setActionsDisabled] = useState(false);
+  const [awaitingStart, setAwaitingStart] = useState(true);
+  const [isPaused, setIsPaused] = useState(false);
   const [isReadingStarted, setIsReadingStarted] = useState(false);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [remainingSeconds, setRemainingSeconds] = useState(READING_TIME_LIMIT_SEC);
@@ -22,19 +25,47 @@ export function useReader(passages, { onProgressUpdate } = {}) {
   const passagesKeyRef = useRef('');
   const actionPendingRef = useRef(false);
   const passiveFiredRef = useRef(false);
+  const remainingSecondsRef = useRef(READING_TIME_LIMIT_SEC);
 
   const passage = passages[currentIndex] ?? null;
+  const canInteract = isReadingStarted && !awaitingStart && !isPaused;
+
+  const syncRemainingSeconds = useCallback((seconds) => {
+    remainingSecondsRef.current = seconds;
+    setRemainingSeconds(seconds);
+  }, []);
 
   const resetReadingTimer = useCallback(() => {
+    setAwaitingStart(true);
+    setIsPaused(false);
     setIsReadingStarted(false);
     setIsTimerRunning(false);
-    setRemainingSeconds(READING_TIME_LIMIT_SEC);
+    syncRemainingSeconds(READING_TIME_LIMIT_SEC);
     passiveFiredRef.current = false;
-  }, []);
+  }, [syncRemainingSeconds]);
 
   const stopTimer = useCallback(() => {
     setIsTimerRunning(false);
   }, []);
+
+  const activateTimer = useCallback(
+    ({ resume = false } = {}) => {
+      if (resume) {
+        const remaining = remainingSecondsRef.current;
+        pageStartRef.current = Date.now() - (READING_TIME_LIMIT_SEC - remaining) * 1000;
+      } else {
+        pageStartRef.current = Date.now();
+        syncRemainingSeconds(READING_TIME_LIMIT_SEC);
+        passiveFiredRef.current = false;
+      }
+
+      setAwaitingStart(false);
+      setIsPaused(false);
+      setIsReadingStarted(true);
+      setIsTimerRunning(true);
+    },
+    [syncRemainingSeconds],
+  );
 
   // Reset when passage set changes (CEFR band switch)
   useEffect(() => {
@@ -54,27 +85,32 @@ export function useReader(passages, { onProgressUpdate } = {}) {
   }, []);
 
   const transitionTo = useCallback(
-    (newIndex, direction) => {
-      if (newIndex < 0 || newIndex >= passages.length || newIndex === currentIndex) return;
+    (newIndex, direction, { autoStart = false } = {}) => {
+      if (newIndex < 0 || newIndex >= passages.length || newIndex === currentIndex) return false;
       setTransitionDirection(direction);
       setIsTransitioning(true);
       setTimeout(() => {
         setCurrentIndex(newIndex);
         resetMarginalia();
-        resetReadingTimer();
+        if (autoStart) {
+          activateTimer();
+        } else {
+          resetReadingTimer();
+        }
         setIsTransitioning(false);
         setTransitionDirection(null);
-      }, 200);
+      }, TRANSITION_MS);
+      return true;
     },
-    [currentIndex, passages.length, resetMarginalia, resetReadingTimer],
+    [activateTimer, currentIndex, passages.length, resetMarginalia, resetReadingTimer],
   );
 
-  const nextPassage = useCallback(() => {
-    const newIndex = currentIndex + 1;
-    if (newIndex >= passages.length) return false;
-    transitionTo(newIndex, 'next');
-    return true;
-  }, [currentIndex, passages.length, transitionTo]);
+  const nextPassage = useCallback(
+    (options) => {
+      return transitionTo(currentIndex + 1, 'next', options);
+    },
+    [currentIndex, transitionTo],
+  );
 
   const releaseActionLock = useCallback(() => {
     actionPendingRef.current = false;
@@ -93,72 +129,94 @@ export function useReader(passages, { onProgressUpdate } = {}) {
   }, [currentIndex, transitionTo]);
 
   const showTranslation = useCallback(() => {
-    if (!isReadingStarted) return;
+    if (!canInteract) return;
     setTranslationVisible(true);
     clearTimeout(translationTimerRef.current);
     translationTimerRef.current = setTimeout(() => {
       setTranslationVisible(false);
     }, 3500);
-  }, [isReadingStarted]);
+  }, [canInteract]);
 
   const recordEncounter = useCallback(
-    async (signal) => {
+    (signal) => {
       if (!passage) return;
       const timeOnPageMs = isReadingStarted ? Date.now() - pageStartRef.current : 0;
       const chunkIds = passage.chunks.map((c) => c.id);
-      try {
-        await logEncounter({
-          userId: USER_ID,
-          chunkIds,
-          passageId: passage.id,
-          signal,
-          timeOnPageMs,
-        });
-        if (onProgressUpdate && (signal === 'got_it' || signal === 'still_hard')) {
-          onProgressUpdate().catch((err) => {
-            console.error('[ERT] progress refresh failed:', err);
-          });
-        }
-      } catch (err) {
+      logEncounter({
+        userId: USER_ID,
+        chunkIds,
+        passageId: passage.id,
+        signal,
+        timeOnPageMs,
+      }).catch((err) => {
         console.error('[ERT] log_encounter failed:', err);
+      });
+
+      if (onProgressUpdate && (signal === 'got_it' || signal === 'still_hard')) {
+        onProgressUpdate().catch((err) => {
+          console.error('[ERT] progress refresh failed:', err);
+        });
       }
     },
-    [isReadingStarted, passage, onProgressUpdate],
+    [isReadingStarted, onProgressUpdate, passage],
   );
 
-  const startReading = useCallback(() => {
-    pageStartRef.current = Date.now();
-    passiveFiredRef.current = false;
-    setRemainingSeconds(READING_TIME_LIMIT_SEC);
-    setIsReadingStarted(true);
-    setIsTimerRunning(true);
-  }, []);
+  const startReading = useCallback(
+    ({ resume = false } = {}) => {
+      activateTimer({ resume });
+    },
+    [activateTimer],
+  );
+
+  const pauseReading = useCallback(() => {
+    if (!canInteract || !isTimerRunning) return;
+    stopTimer();
+    setIsPaused(true);
+    setAwaitingStart(true);
+  }, [canInteract, isTimerRunning, stopTimer]);
+
+  const finishPassageAction = useCallback(
+    (signal) => {
+      stopTimer();
+      recordEncounter(signal);
+      const moved = nextPassage({ autoStart: true });
+      if (!moved) {
+        resetReadingTimer();
+      }
+    },
+    [nextPassage, recordEncounter, resetReadingTimer, stopTimer],
+  );
 
   const handleGotIt = useCallback(async () => {
-    if (!isReadingStarted || !beginAction()) return;
-    stopTimer();
-    await recordEncounter('got_it');
-    if (!nextPassage()) releaseActionLock();
-  }, [beginAction, isReadingStarted, nextPassage, recordEncounter, releaseActionLock, stopTimer]);
+    if (!canInteract || !beginAction()) return;
+    try {
+      finishPassageAction('got_it');
+      await new Promise((resolve) => setTimeout(resolve, TRANSITION_MS));
+    } finally {
+      releaseActionLock();
+    }
+  }, [beginAction, canInteract, finishPassageAction, releaseActionLock]);
 
   const handleStillHard = useCallback(async () => {
-    if (!isReadingStarted || !beginAction()) return;
-    stopTimer();
-    await recordEncounter('still_hard');
-    setHardFlash(true);
-    setTimeout(() => {
+    if (!canInteract || !beginAction()) return;
+    try {
+      finishPassageAction('still_hard');
+      setHardFlash(true);
+      await new Promise((resolve) => setTimeout(resolve, 240));
       setHardFlash(false);
-      if (!nextPassage()) releaseActionLock();
-    }, 240);
-  }, [beginAction, isReadingStarted, nextPassage, recordEncounter, releaseActionLock, stopTimer]);
+      await new Promise((resolve) => setTimeout(resolve, Math.max(0, TRANSITION_MS - 240)));
+    } finally {
+      releaseActionLock();
+    }
+  }, [beginAction, canInteract, finishPassageAction, releaseActionLock]);
 
   const selectChunk = useCallback(
     (chunkId) => {
-      if (!isReadingStarted) return;
+      if (!canInteract) return;
       setActiveChunkId(chunkId);
       setMarginaliaOpen(true);
     },
-    [isReadingStarted],
+    [canInteract],
   );
 
   const closeMarginalia = useCallback(() => {
@@ -177,7 +235,7 @@ export function useReader(passages, { onProgressUpdate } = {}) {
     const tick = () => {
       const elapsed = Date.now() - pageStartRef.current;
       const remaining = Math.max(0, Math.ceil((READING_TIME_LIMIT_MS - elapsed) / 1000));
-      setRemainingSeconds(remaining);
+      syncRemainingSeconds(remaining);
 
       if (remaining === 0 && !passiveFiredRef.current) {
         passiveFiredRef.current = true;
@@ -188,12 +246,12 @@ export function useReader(passages, { onProgressUpdate } = {}) {
     tick();
     const interval = setInterval(tick, 250);
     return () => clearInterval(interval);
-  }, [currentIndex, isTimerRunning, passage, recordEncounter]);
+  }, [currentIndex, isTimerRunning, passage, recordEncounter, syncRemainingSeconds]);
 
   // Keyboard navigation
   useEffect(() => {
     const onKeyDown = (e) => {
-      if (actionPendingRef.current || !isReadingStarted) return;
+      if (actionPendingRef.current || !canInteract) return;
       if (e.key === 'ArrowRight' || e.key === ' ') {
         e.preventDefault();
         nextPassage();
@@ -208,7 +266,7 @@ export function useReader(passages, { onProgressUpdate } = {}) {
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [closeMarginalia, isReadingStarted, nextPassage, prevPassage, showTranslation]);
+  }, [canInteract, closeMarginalia, nextPassage, prevPassage, showTranslation]);
 
   useEffect(() => {
     return () => clearTimeout(translationTimerRef.current);
@@ -228,9 +286,12 @@ export function useReader(passages, { onProgressUpdate } = {}) {
     translationVisible,
     hardFlash,
     actionsDisabled,
+    awaitingStart,
+    isPaused,
     isReadingStarted,
     remainingSeconds,
     startReading,
+    pauseReading,
     nextPassage,
     prevPassage,
     selectChunk,

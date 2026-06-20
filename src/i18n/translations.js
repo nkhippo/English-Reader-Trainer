@@ -32,6 +32,9 @@ export const translations = {
     processing: 'Saving…',
     startReading: 'Start reading',
     startHint: 'Press start when you are ready. The timer begins once you begin reading.',
+    resumeReading: 'Resume',
+    pauseHint: 'Reading is paused. Resume when you are ready to continue.',
+    suspend: 'Pause',
     timeRemaining: (sec) => `${sec}s left`,
   },
   ja: {
@@ -53,6 +56,9 @@ export const translations = {
     processing: '処理中…',
     startReading: '読み始める',
     startHint: '準備ができたら開始してください。タイマーは読み始めてからカウントされます。',
+    resumeReading: '再開する',
+    pauseHint: '中断中です。準備ができたら再開してください。',
+    suspend: '中断',
     timeRemaining: (sec) => `残り ${sec} 秒`,
   },
 };

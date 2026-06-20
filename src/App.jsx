@@ -106,8 +106,10 @@ export default function App() {
 
       <main className="reader">
         <StartReadingOverlay
-          visible={!reader.isReadingStarted && !!reader.passage}
-          onStart={reader.startReading}
+          visible={reader.awaitingStart && !!reader.passage}
+          paused={reader.isPaused}
+          onStart={() => reader.startReading()}
+          onResume={() => reader.startReading({ resume: true })}
         />
         <PassageView
           passage={reader.passage}
@@ -131,8 +133,17 @@ export default function App() {
       <Footer
         onStillHard={reader.handleStillHard}
         onGotIt={reader.handleGotIt}
+        onSuspend={reader.pauseReading}
         hardFlash={reader.hardFlash}
-        disabled={reader.actionsDisabled || !reader.isReadingStarted}
+        actionsDisabled={
+          reader.actionsDisabled || reader.awaitingStart || reader.isPaused || !reader.isReadingStarted
+        }
+        suspendDisabled={
+          reader.actionsDisabled ||
+          reader.awaitingStart ||
+          reader.isPaused ||
+          !reader.isReadingStarted
+        }
       />
 
       <TranslationOverlay text={reader.passage?.ja ?? ''} visible={reader.translationVisible} />
