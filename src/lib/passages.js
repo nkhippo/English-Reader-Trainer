@@ -1,4 +1,4 @@
-import { resolveChunkJa } from './chunkJaFallbacks.js';
+import { resolveChunkEn, resolveChunkJa } from './chunkGlosses.js';
 
 /** Normalize GAS /generate_passage response for useReader. */
 export function normalizePassagesFromApi(apiPassages = []) {
@@ -11,6 +11,7 @@ export function normalizePassagesFromApi(apiPassages = []) {
       id: c.chunk_id || c.id,
       text: c.text,
       ja: resolveChunkJa(c.text, c.ja_translation || c.ja),
+      en: resolveChunkEn(c.text, c.en_translation || c.en),
       cefr: c.cefr,
       encounters: c.encounters ?? 0,
       stage: c.srs_stage ?? c.stage ?? 0,

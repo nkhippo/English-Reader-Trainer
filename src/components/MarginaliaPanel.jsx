@@ -1,4 +1,5 @@
 import { useI18n } from '../i18n/I18nProvider.jsx';
+import { resolveChunkGloss } from '../lib/chunkGlosses.js';
 
 function StageDots({ stage }) {
   return (
@@ -36,8 +37,9 @@ function StageDisplay({ stage, status }) {
 }
 
 export function MarginaliaPanel({ chunk, isOpen, onClose, isFading, clozePending }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const emptyMessage = clozePending ? t.clozeReveal : t.marginaliaEmpty;
+  const gloss = chunk ? resolveChunkGloss(chunk.text, chunk, locale) : '';
 
   return (
     <aside className={`marginalia ${isOpen ? 'is-open' : ''}`}>
@@ -52,7 +54,7 @@ export function MarginaliaPanel({ chunk, isOpen, onClose, isFading, clozePending
         ) : (
           <div className="note">
             <span className="note__chunk">{chunk.text}</span>
-            {chunk.ja ? <div className="note__translation">{chunk.ja}</div> : null}
+            {gloss ? <div className="note__translation">{gloss}</div> : null}
             <hr className="note__rule" />
             <div className="note__meta">
               <div className="note__meta-item">
