@@ -427,9 +427,14 @@ html[lang='ja'] .note__meta {
   border-radius: 0;
 }
 
-.btn:hover {
+.btn:hover:not(:disabled) {
   background: var(--color-ink);
   color: var(--color-page);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .btn--primary {
@@ -437,7 +442,7 @@ html[lang='ja'] .note__meta {
   color: var(--color-page);
 }
 
-.btn--primary:hover {
+.btn--primary:hover:not(:disabled) {
   background: var(--color-ink-soft);
   border-color: var(--color-ink-soft);
 }
@@ -447,7 +452,7 @@ html[lang='ja'] .note__meta {
   color: var(--color-ink-soft);
 }
 
-.btn--ghost:hover {
+.btn--ghost:hover:not(:disabled) {
   border-color: var(--color-ink-soft);
   background: transparent;
   color: var(--color-ink);

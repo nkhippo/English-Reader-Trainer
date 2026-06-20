@@ -127,6 +127,7 @@ export default function App() {
         onStillHard={reader.handleStillHard}
         onGotIt={reader.handleGotIt}
         hardFlash={reader.hardFlash}
+        disabled={reader.actionsDisabled}
       />
 
       <TranslationOverlay text={reader.passage?.ja ?? ''} visible={reader.translationVisible} />

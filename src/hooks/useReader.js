@@ -10,10 +10,12 @@ export function useReader(passages, { onProgressUpdate } = {}) {
   const [transitionDirection, setTransitionDirection] = useState(null);
   const [translationVisible, setTranslationVisible] = useState(false);
   const [hardFlash, setHardFlash] = useState(false);
+  const [actionsDisabled, setActionsDisabled] = useState(false);
 
   const pageStartRef = useRef(Date.now());
   const translationTimerRef = useRef(null);
   const passagesKeyRef = useRef('');
+  const actionPendingRef = useRef(false);
 
   const passage = passages[currentIndex] ?? null;
 
@@ -51,8 +53,23 @@ export function useReader(passages, { onProgressUpdate } = {}) {
   );
 
   const nextPassage = useCallback(() => {
-    transitionTo(currentIndex + 1, 'next');
-  }, [currentIndex, transitionTo]);
+    const newIndex = currentIndex + 1;
+    if (newIndex >= passages.length) return false;
+    transitionTo(newIndex, 'next');
+    return true;
+  }, [currentIndex, passages.length, transitionTo]);
+
+  const releaseActionLock = useCallback(() => {
+    actionPendingRef.current = false;
+    setActionsDisabled(false);
+  }, []);
+
+  const beginAction = useCallback(() => {
+    if (actionPendingRef.current) return false;
+    actionPendingRef.current = true;
+    setActionsDisabled(true);
+    return true;
+  }, []);
 
   const prevPassage = useCallback(() => {
     transitionTo(currentIndex - 1, 'prev');
@@ -90,18 +107,20 @@ export function useReader(passages, { onProgressUpdate } = {}) {
   );
 
   const handleGotIt = useCallback(async () => {
+    if (!beginAction()) return;
     await recordEncounter('got_it');
-    nextPassage();
-  }, [nextPassage, recordEncounter]);
+    if (!nextPassage()) releaseActionLock();
+  }, [beginAction, nextPassage, recordEncounter, releaseActionLock]);
 
   const handleStillHard = useCallback(async () => {
+    if (!beginAction()) return;
     await recordEncounter('still_hard');
     setHardFlash(true);
     setTimeout(() => {
       setHardFlash(false);
-      nextPassage();
+      if (!nextPassage()) releaseActionLock();
     }, 240);
-  }, [nextPassage, recordEncounter]);
+  }, [beginAction, nextPassage, recordEncounter, releaseActionLock]);
 
   const selectChunk = useCallback((chunkId) => {
     setActiveChunkId(chunkId);
@@ -112,6 +131,10 @@ export function useReader(passages, { onProgressUpdate } = {}) {
     setMarginaliaOpen(false);
     setActiveChunkId(null);
   }, []);
+
+  useEffect(() => {
+    releaseActionLock();
+  }, [currentIndex, releaseActionLock]);
 
   // Passive encounter after 30 seconds
   useEffect(() => {
@@ -158,6 +181,7 @@ export function useReader(passages, { onProgressUpdate } = {}) {
     transitionDirection,
     translationVisible,
     hardFlash,
+    actionsDisabled,
     nextPassage,
     prevPassage,
     selectChunk,
