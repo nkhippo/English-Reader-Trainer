@@ -99,7 +99,7 @@ Imports ~7,100 entries (words + chunks) into `chunks_master`.
 enrichAllTranslations()
 ```
 
-Runs batches until `remaining: 0`. If the 6-minute execution limit is reached, it **automatically schedules the next run** (~30 seconds later) and continues until complete. No manual re-runs needed.
+Runs batches of **125 items** per Claude call until `remaining: 0`. If the 6-minute execution limit is reached, it **automatically schedules the next run** (~30 seconds later) and continues until complete. No manual re-runs needed.
 
 To cancel a queued continuation:
 
@@ -131,7 +131,7 @@ migrateChunksAddEnTranslationColumn()
 enrichAllEnglishGlosses()
 ```
 
-Runs until `en_translation` `remaining: 0` (auto-continues like the Japanese batch).
+Runs batches of **125 items** per Claude call until `en_translation` `remaining: 0` (auto-continues like the Japanese batch).
 
 To cancel:
 

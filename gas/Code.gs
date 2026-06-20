@@ -44,7 +44,11 @@ const SHEET_HEADERS = {
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001';
-const ENRICH_BATCH_SIZE = 25;
+/** Items per Claude call for ja/en enrichment batches (was 25). */
+const ENRICH_BATCH_SIZE = 125;
+/** Output token budget — scale with batch size to avoid truncated JSON. */
+const ENRICH_JA_MAX_TOKENS = 16384;
+const ENRICH_EN_MAX_TOKENS = 8192;
 /** Stop batching slightly before the 6-min GAS limit and chain a trigger. */
 const ENRICH_MAX_RUNTIME_MS = 5.5 * 60 * 1000;
 const ENRICH_CONTINUE_DELAY_MS = 30 * 1000;
@@ -332,7 +336,7 @@ function callClaudeEnrich_(items, apiKey) {
 
   const payload = {
     model: ANTHROPIC_MODEL,
-    max_tokens: 4096,
+    max_tokens: ENRICH_JA_MAX_TOKENS,
     messages: [{
       role: 'user',
       content: `You are a bilingual English-Japanese lexicographer. For each item, provide:
@@ -551,7 +555,7 @@ function callClaudeEnrichEnglish_(items, apiKey) {
 
   const payload = {
     model: ANTHROPIC_MODEL,
-    max_tokens: 4096,
+    max_tokens: ENRICH_EN_MAX_TOKENS,
     messages: [{
       role: 'user',
       content: `You are an English lexicographer writing learner-friendly glosses for CEFR vocabulary items.
