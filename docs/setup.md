@@ -121,6 +121,15 @@ If `encounter_log` has rows but `user_progress` is empty, run **`rebuildUserProg
 
 SRS rules (§4.2): got_it → stage+1, still_hard → stage−1, passive → +1 day, graduated at 5 encounters × 3 passages.
 
+## Phase 4: Dynamic passage generation
+
+1. Copy latest `gas/Code.gs` and redeploy Web App.
+2. Add Script Property: `USE_DYNAMIC_PASSAGES` = `true` (omit or `false` for template rotation only).
+3. `ANTHROPIC_API_KEY` must be set (same key as translation batch).
+4. Generated passages are saved to Drive `passages/` and registered in `passages_meta`.
+
+Without the flag, the app rotates fixed templates indefinitely (no session end). With the flag, `/generate_passage` and `/session` call Claude using `due_chunks` selection.
+
 ## Local Development
 
 ```bash

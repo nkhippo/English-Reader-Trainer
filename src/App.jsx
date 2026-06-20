@@ -7,9 +7,7 @@ import { MarginaliaPanel } from './components/MarginaliaPanel.jsx';
 import { Footer } from './components/Footer.jsx';
 import { TranslationOverlay } from './components/TranslationOverlay.jsx';
 import { ProcessingOverlay } from './components/ProcessingOverlay.jsx';
-import { ReadingTimerBar } from './components/ReadingTimerBar.jsx';
-import { StartReadingOverlay } from './components/StartReadingOverlay.jsx';
-import { fetchSession } from './lib/api.js';
+import { fetchGeneratePassage, fetchSession, fetchStats } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
 import { USER_ID } from './lib/config.js';
@@ -25,12 +23,30 @@ function filterMockByBand(band) {
   return MOCK_PASSAGES.filter((p) => p.cefr === 'B1' || band === 'B1');
 }
 
+function firstPassageFromResponse(res, band) {
+  const normalized = normalizePassagesFromApi(res.passages || []);
+  if (normalized.length > 0) return normalized[0];
+  return filterMockByBand(band)[0] ?? null;
+}
+
 export default function App() {
   const { t } = useI18n();
   const [cefrBand, setCefrBand] = useState(getStoredCefrBand);
   const [passages, setPassages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ reviewing: 0, graduated: 0 });
+
+  const refreshStats = useCallback(async (band) => {
+    try {
+      const statsRes = await fetchStats({ userId: USER_ID, cefr: band });
+      setStats({
+        reviewing: statsRes.reviewing ?? 0,
+        graduated: statsRes.graduated ?? 0,
+      });
+    } catch (err) {
+      console.error('[ERT] stats refresh failed:', err);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,8 +57,8 @@ export default function App() {
         const sessionRes = await fetchSession({ userId: USER_ID, cefr: band });
         if (cancelled) return;
 
-        const normalized = normalizePassagesFromApi(sessionRes.passages || []);
-        setPassages(normalized.length > 0 ? normalized : filterMockByBand(band));
+        const first = firstPassageFromResponse(sessionRes, band);
+        setPassages(first ? [first] : filterMockByBand(band).slice(0, 1));
         setStats({
           reviewing: sessionRes.reviewing ?? 0,
           graduated: sessionRes.graduated ?? 0,
@@ -50,7 +66,8 @@ export default function App() {
       } catch (err) {
         if (cancelled) return;
         console.error('[ERT] load failed:', err);
-        setPassages(filterMockByBand(band));
+        const mock = filterMockByBand(band);
+        setPassages(mock.length > 0 ? [mock[0]] : []);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -63,16 +80,23 @@ export default function App() {
   }, [cefrBand]);
 
   const handleProgressUpdate = useCallback(async () => {
+    await refreshStats(cefrBand);
+  }, [cefrBand, refreshStats]);
+
+  const handleAdvancePastEnd = useCallback(async () => {
     try {
-      const sessionRes = await fetchSession({ userId: USER_ID, cefr: cefrBand });
-      const normalized = normalizePassagesFromApi(sessionRes.passages || []);
-      if (normalized.length > 0) setPassages(normalized);
-      setStats({
-        reviewing: sessionRes.reviewing ?? 0,
-        graduated: sessionRes.graduated ?? 0,
-      });
+      const res = await fetchGeneratePassage({ userId: USER_ID, cefr: cefrBand });
+      const normalized = normalizePassagesFromApi(res.passages || []);
+      if (normalized.length === 0) return false;
+      setPassages((prev) => [...prev, normalized[0]]);
+      return true;
     } catch (err) {
-      console.error('[ERT] progress refresh failed:', err);
+      console.error('[ERT] fetch next passage failed:', err);
+      const mock = filterMockByBand(cefrBand);
+      if (mock.length === 0) return false;
+      const next = mock[Math.floor(Math.random() * mock.length)];
+      setPassages((prev) => [...prev, next]);
+      return true;
     }
   }, [cefrBand]);
 
@@ -81,7 +105,10 @@ export default function App() {
     setCefrBand(band);
   };
 
-  const reader = useReader(passages, { onProgressUpdate: handleProgressUpdate });
+  const reader = useReader(passages, {
+    onProgressUpdate: handleProgressUpdate,
+    onAdvancePastEnd: handleAdvancePastEnd,
+  });
 
   if (loading && passages.length === 0) {
     return (
@@ -98,28 +125,17 @@ export default function App() {
         onCefrChange={handleCefrChange}
         reviewing={stats.reviewing}
         graduated={stats.graduated}
-        currentPage={reader.totalPassages > 0 ? reader.currentIndex + 1 : 0}
-        totalPages={reader.totalPassages}
       />
 
-      <ReadingTimerBar visible={reader.isReadingStarted} remainingSeconds={reader.remainingSeconds} />
-
       <main className="reader">
-        <StartReadingOverlay
-          visible={reader.awaitingStart && !!reader.passage}
-          paused={reader.isPaused}
-          onStart={() => reader.startReading()}
-          onResume={() => reader.startReading({ resume: true })}
-        />
         <PassageView
           passage={reader.passage}
           activeChunkId={reader.activeChunkId}
-          currentIndex={reader.currentIndex}
           isTransitioning={reader.isTransitioning}
           transitionDirection={reader.transitionDirection}
           onChunkClick={reader.selectChunk}
           onBackgroundClick={reader.showTranslation}
-          onSwipeNext={reader.nextPassage}
+          onSwipeNext={() => reader.advanceToNext()}
           onSwipePrev={reader.prevPassage}
         />
         <MarginaliaPanel
@@ -133,17 +149,8 @@ export default function App() {
       <Footer
         onStillHard={reader.handleStillHard}
         onGotIt={reader.handleGotIt}
-        onSuspend={reader.pauseReading}
         hardFlash={reader.hardFlash}
-        actionsDisabled={
-          reader.actionsDisabled || reader.awaitingStart || reader.isPaused || !reader.isReadingStarted
-        }
-        suspendDisabled={
-          reader.actionsDisabled ||
-          reader.awaitingStart ||
-          reader.isPaused ||
-          !reader.isReadingStarted
-        }
+        disabled={reader.actionsDisabled}
       />
 
       <TranslationOverlay text={reader.passage?.ja ?? ''} visible={reader.translationVisible} />

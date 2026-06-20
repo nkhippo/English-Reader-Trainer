@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { useI18n } from '../i18n/I18nProvider.jsx';
 
 function parsePassageText(text, chunks) {
   const parts = text.split(/(\{\{[^}]+\}\})/);
@@ -19,7 +18,6 @@ function parsePassageText(text, chunks) {
 export function PassageView({
   passage,
   activeChunkId,
-  currentIndex,
   isTransitioning,
   transitionDirection,
   onChunkClick,
@@ -27,7 +25,6 @@ export function PassageView({
   onSwipeNext,
   onSwipePrev,
 }) {
-  const { t } = useI18n();
   const areaRef = useRef(null);
   const touchStartRef = useRef(null);
   const [fadingMarginalia, setFadingMarginalia] = useState(false);
@@ -35,8 +32,8 @@ export function PassageView({
   useEffect(() => {
     if (activeChunkId) {
       setFadingMarginalia(true);
-      const t = setTimeout(() => setFadingMarginalia(false), 140);
-      return () => clearTimeout(t);
+      const timer = setTimeout(() => setFadingMarginalia(false), 140);
+      return () => clearTimeout(timer);
     }
   }, [activeChunkId]);
 
@@ -101,9 +98,6 @@ export function PassageView({
           )}
         </p>
       </article>
-      <div className="page-indicator">
-        {t.passageIndicator(String(currentIndex + 1).padStart(2, '0'), passage.cefr)}
-      </div>
     </section>
   );
 }

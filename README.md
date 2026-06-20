@@ -34,11 +34,13 @@ docs/          Setup guide
 | 1 | ✅ | React UI + GAS + encounter logging |
 | 2 | ✅ | CEFR import, ja_translation batch, level switcher UI |
 | 3 | ✅ | SRS engine (due_chunks, update_progress, graduation) |
-| 4 | — | Claude passage generation |
+| 4 | ✅ | Claude dynamic passage generation (flag: USE_DYNAMIC_PASSAGES) |
 | 5 | — | TTS audio |
 | 6 | — | Progress dashboard |
 
 See `docs/setup.md` for GAS/Sheets configuration.
+
+See [`docs/product-overview.md`](docs/product-overview.md) for design philosophy, current spec, and roadmap (including Phase 4).
 
 ## Design
 

@@ -5,7 +5,7 @@ import { READING_TIME_LIMIT_SEC, USER_ID } from '../lib/config.js';
 const READING_TIME_LIMIT_MS = READING_TIME_LIMIT_SEC * 1000;
 const TRANSITION_MS = 200;
 
-export function useReader(passages, { onProgressUpdate } = {}) {
+export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {}) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [activeChunkId, setActiveChunkId] = useState(null);
   const [marginaliaOpen, setMarginaliaOpen] = useState(false);
@@ -14,70 +14,24 @@ export function useReader(passages, { onProgressUpdate } = {}) {
   const [translationVisible, setTranslationVisible] = useState(false);
   const [hardFlash, setHardFlash] = useState(false);
   const [actionsDisabled, setActionsDisabled] = useState(false);
-  const [awaitingStart, setAwaitingStart] = useState(true);
-  const [isPaused, setIsPaused] = useState(false);
-  const [isReadingStarted, setIsReadingStarted] = useState(false);
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
-  const [remainingSeconds, setRemainingSeconds] = useState(READING_TIME_LIMIT_SEC);
 
   const pageStartRef = useRef(Date.now());
   const translationTimerRef = useRef(null);
   const passagesKeyRef = useRef('');
   const actionPendingRef = useRef(false);
   const passiveFiredRef = useRef(false);
-  const remainingSecondsRef = useRef(READING_TIME_LIMIT_SEC);
 
   const passage = passages[currentIndex] ?? null;
-  const canInteract = isReadingStarted && !awaitingStart && !isPaused;
 
-  const syncRemainingSeconds = useCallback((seconds) => {
-    remainingSecondsRef.current = seconds;
-    setRemainingSeconds(seconds);
-  }, []);
-
-  const resetReadingTimer = useCallback(() => {
-    setAwaitingStart(true);
-    setIsPaused(false);
-    setIsReadingStarted(false);
-    setIsTimerRunning(false);
-    syncRemainingSeconds(READING_TIME_LIMIT_SEC);
-    passiveFiredRef.current = false;
-  }, [syncRemainingSeconds]);
-
-  const stopTimer = useCallback(() => {
-    setIsTimerRunning(false);
-  }, []);
-
-  const activateTimer = useCallback(
-    ({ resume = false } = {}) => {
-      if (resume) {
-        const remaining = remainingSecondsRef.current;
-        pageStartRef.current = Date.now() - (READING_TIME_LIMIT_SEC - remaining) * 1000;
-      } else {
-        pageStartRef.current = Date.now();
-        syncRemainingSeconds(READING_TIME_LIMIT_SEC);
-        passiveFiredRef.current = false;
-      }
-
-      setAwaitingStart(false);
-      setIsPaused(false);
-      setIsReadingStarted(true);
-      setIsTimerRunning(true);
-    },
-    [syncRemainingSeconds],
-  );
-
-  // Reset when passage set changes (CEFR band switch)
   useEffect(() => {
     const key = passages.map((p) => p.id).join('|');
     if (passagesKeyRef.current && passagesKeyRef.current !== key) {
       setCurrentIndex(0);
       setActiveChunkId(null);
       setMarginaliaOpen(false);
-      resetReadingTimer();
     }
     passagesKeyRef.current = key;
-  }, [passages, resetReadingTimer]);
+  }, [passages]);
 
   const resetMarginalia = useCallback(() => {
     setActiveChunkId(null);
@@ -85,32 +39,40 @@ export function useReader(passages, { onProgressUpdate } = {}) {
   }, []);
 
   const transitionTo = useCallback(
-    (newIndex, direction, { autoStart = false } = {}) => {
+    (newIndex, direction) => {
       if (newIndex < 0 || newIndex >= passages.length || newIndex === currentIndex) return false;
       setTransitionDirection(direction);
       setIsTransitioning(true);
       setTimeout(() => {
         setCurrentIndex(newIndex);
         resetMarginalia();
-        if (autoStart) {
-          activateTimer();
-        } else {
-          resetReadingTimer();
-        }
         setIsTransitioning(false);
         setTransitionDirection(null);
       }, TRANSITION_MS);
       return true;
     },
-    [activateTimer, currentIndex, passages.length, resetMarginalia, resetReadingTimer],
+    [currentIndex, passages.length, resetMarginalia],
   );
 
-  const nextPassage = useCallback(
-    (options) => {
-      return transitionTo(currentIndex + 1, 'next', options);
-    },
-    [currentIndex, transitionTo],
-  );
+  const advanceToNext = useCallback(async () => {
+    if (currentIndex + 1 < passages.length) {
+      return transitionTo(currentIndex + 1, 'next');
+    }
+    if (!onAdvancePastEnd) return false;
+
+    const added = await onAdvancePastEnd();
+    if (!added) return false;
+
+    setTransitionDirection('next');
+    setIsTransitioning(true);
+    setTimeout(() => {
+      setCurrentIndex((i) => i + 1);
+      resetMarginalia();
+      setIsTransitioning(false);
+      setTransitionDirection(null);
+    }, TRANSITION_MS);
+    return true;
+  }, [currentIndex, onAdvancePastEnd, passages.length, resetMarginalia, transitionTo]);
 
   const releaseActionLock = useCallback(() => {
     actionPendingRef.current = false;
@@ -129,18 +91,17 @@ export function useReader(passages, { onProgressUpdate } = {}) {
   }, [currentIndex, transitionTo]);
 
   const showTranslation = useCallback(() => {
-    if (!canInteract) return;
     setTranslationVisible(true);
     clearTimeout(translationTimerRef.current);
     translationTimerRef.current = setTimeout(() => {
       setTranslationVisible(false);
     }, 3500);
-  }, [canInteract]);
+  }, []);
 
   const recordEncounter = useCallback(
     (signal) => {
       if (!passage) return;
-      const timeOnPageMs = isReadingStarted ? Date.now() - pageStartRef.current : 0;
+      const timeOnPageMs = Date.now() - pageStartRef.current;
       const chunkIds = passage.chunks.map((c) => c.id);
       logEncounter({
         userId: USER_ID,
@@ -158,49 +119,31 @@ export function useReader(passages, { onProgressUpdate } = {}) {
         });
       }
     },
-    [isReadingStarted, onProgressUpdate, passage],
+    [onProgressUpdate, passage],
   );
-
-  const startReading = useCallback(
-    ({ resume = false } = {}) => {
-      activateTimer({ resume });
-    },
-    [activateTimer],
-  );
-
-  const pauseReading = useCallback(() => {
-    if (!canInteract || !isTimerRunning) return;
-    stopTimer();
-    setIsPaused(true);
-    setAwaitingStart(true);
-  }, [canInteract, isTimerRunning, stopTimer]);
 
   const finishPassageAction = useCallback(
-    (signal) => {
-      stopTimer();
+    async (signal) => {
       recordEncounter(signal);
-      const moved = nextPassage({ autoStart: true });
-      if (!moved) {
-        resetReadingTimer();
-      }
+      await advanceToNext();
     },
-    [nextPassage, recordEncounter, resetReadingTimer, stopTimer],
+    [advanceToNext, recordEncounter],
   );
 
   const handleGotIt = useCallback(async () => {
-    if (!canInteract || !beginAction()) return;
+    if (!beginAction()) return;
     try {
-      finishPassageAction('got_it');
+      await finishPassageAction('got_it');
       await new Promise((resolve) => setTimeout(resolve, TRANSITION_MS));
     } finally {
       releaseActionLock();
     }
-  }, [beginAction, canInteract, finishPassageAction, releaseActionLock]);
+  }, [beginAction, finishPassageAction, releaseActionLock]);
 
   const handleStillHard = useCallback(async () => {
-    if (!canInteract || !beginAction()) return;
+    if (!beginAction()) return;
     try {
-      finishPassageAction('still_hard');
+      await finishPassageAction('still_hard');
       setHardFlash(true);
       await new Promise((resolve) => setTimeout(resolve, 240));
       setHardFlash(false);
@@ -208,16 +151,12 @@ export function useReader(passages, { onProgressUpdate } = {}) {
     } finally {
       releaseActionLock();
     }
-  }, [beginAction, canInteract, finishPassageAction, releaseActionLock]);
+  }, [beginAction, finishPassageAction, releaseActionLock]);
 
-  const selectChunk = useCallback(
-    (chunkId) => {
-      if (!canInteract) return;
-      setActiveChunkId(chunkId);
-      setMarginaliaOpen(true);
-    },
-    [canInteract],
-  );
+  const selectChunk = useCallback((chunkId) => {
+    setActiveChunkId(chunkId);
+    setMarginaliaOpen(true);
+  }, []);
 
   const closeMarginalia = useCallback(() => {
     setMarginaliaOpen(false);
@@ -228,33 +167,26 @@ export function useReader(passages, { onProgressUpdate } = {}) {
     releaseActionLock();
   }, [currentIndex, releaseActionLock]);
 
-  // Countdown + passive encounter after time limit
+  // Silent passive encounter after time limit (no UI)
   useEffect(() => {
-    if (!isTimerRunning || !passage) return undefined;
-
-    const tick = () => {
-      const elapsed = Date.now() - pageStartRef.current;
-      const remaining = Math.max(0, Math.ceil((READING_TIME_LIMIT_MS - elapsed) / 1000));
-      syncRemainingSeconds(remaining);
-
-      if (remaining === 0 && !passiveFiredRef.current) {
+    if (!passage) return undefined;
+    pageStartRef.current = Date.now();
+    passiveFiredRef.current = false;
+    const timer = setTimeout(() => {
+      if (!passiveFiredRef.current) {
         passiveFiredRef.current = true;
         recordEncounter('passive');
       }
-    };
+    }, READING_TIME_LIMIT_MS);
+    return () => clearTimeout(timer);
+  }, [currentIndex, passage, recordEncounter]);
 
-    tick();
-    const interval = setInterval(tick, 250);
-    return () => clearInterval(interval);
-  }, [currentIndex, isTimerRunning, passage, recordEncounter, syncRemainingSeconds]);
-
-  // Keyboard navigation
   useEffect(() => {
     const onKeyDown = (e) => {
-      if (actionPendingRef.current || !canInteract) return;
+      if (actionPendingRef.current) return;
       if (e.key === 'ArrowRight' || e.key === ' ') {
         e.preventDefault();
-        nextPassage();
+        advanceToNext();
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
         prevPassage();
@@ -266,7 +198,7 @@ export function useReader(passages, { onProgressUpdate } = {}) {
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [canInteract, closeMarginalia, nextPassage, prevPassage, showTranslation]);
+  }, [advanceToNext, closeMarginalia, prevPassage, showTranslation]);
 
   useEffect(() => {
     return () => clearTimeout(translationTimerRef.current);
@@ -277,7 +209,6 @@ export function useReader(passages, { onProgressUpdate } = {}) {
   return {
     passage,
     currentIndex,
-    totalPassages: passages.length,
     activeChunkId,
     activeChunk,
     marginaliaOpen,
@@ -286,14 +217,8 @@ export function useReader(passages, { onProgressUpdate } = {}) {
     translationVisible,
     hardFlash,
     actionsDisabled,
-    awaitingStart,
-    isPaused,
-    isReadingStarted,
-    remainingSeconds,
-    startReading,
-    pauseReading,
-    nextPassage,
     prevPassage,
+    advanceToNext,
     selectChunk,
     closeMarginalia,
     showTranslation,

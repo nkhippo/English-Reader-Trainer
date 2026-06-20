@@ -4,6 +4,7 @@
  * Script Properties:
  *   SPREADSHEET_ID, DRIVE_ROOT_ID
  *   ANTHROPIC_API_KEY — for ja_translation batch (enrichTranslationsBatch)
+ *   USE_DYNAMIC_PASSAGES — set to "true" to enable Claude passage generation (Phase 4)
  *
  * Manual setup (Apps Script editor):
  *   1. setupSheets() — once
@@ -107,7 +108,7 @@ function doGet(e) {
   return jsonResponse({
     status: 'ok',
     service: 'english-reader-trainer',
-    phase: 3,
+    phase: 4,
     chunks_master_count: chunksCount,
   });
 }
@@ -539,21 +540,330 @@ function handleGeneratePassage_(body) {
   const band = normalizeCefrBand_(body.cefr || 'B1');
   const index = loadChunksIndex_();
   const progressMap = loadUserProgressMap_(userId);
-  const templates = getPassageTemplatesForBand_(band);
-  const passages = templates.map((tpl) => enrichPassageTemplate_(tpl, index, band, progressMap));
-  return { passages, cefr_band: band };
+  const excludePassageIds = getRecentPassageIds_(userId, 24);
+  const passage = buildPassageForUser_(userId, band, index, progressMap, excludePassageIds);
+  return { passages: [passage], cefr_band: band };
 }
 
-/** Single round-trip for initial app load (passages + header stats). */
+/** Single round-trip for initial app load (one passage + header stats). */
 function handleSession_(body) {
   const userId = body.user_id || 'naoya';
   const band = normalizeCefrBand_(body.cefr || 'B1');
   const index = loadChunksIndex_();
   const progressMap = loadUserProgressMap_(userId);
-  const templates = getPassageTemplatesForBand_(band);
-  const passages = templates.map((tpl) => enrichPassageTemplate_(tpl, index, band, progressMap));
+  const excludePassageIds = getRecentPassageIds_(userId, 24);
+  const passage = buildPassageForUser_(userId, band, index, progressMap, excludePassageIds);
   const stats = computeStatsFromIndex_(index, progressMap, band);
-  return { passages, cefr_band: band, ...stats };
+  return { passages: [passage], cefr_band: band, ...stats };
+}
+
+function buildPassageForUser_(userId, band, index, progressMap, excludePassageIds) {
+  if (isDynamicPassagesEnabled_()) {
+    try {
+      return generateDynamicPassage_(userId, band, index, progressMap, excludePassageIds);
+    } catch (err) {
+      Logger.log('Dynamic passage failed, using template: ' + err);
+    }
+  }
+  return pickTemplatePassage_(band, index, progressMap, excludePassageIds);
+}
+
+function isDynamicPassagesEnabled_() {
+  return PropertiesService.getScriptProperties().getProperty('USE_DYNAMIC_PASSAGES') === 'true';
+}
+
+function getRecentPassageIds_(userId, hours) {
+  const sheet = getSheet_(SHEET_NAMES.ENCOUNTERS);
+  if (sheet.getLastRow() < 2) return [];
+  const cutoff = Date.now() - hours * 3600000;
+  const data = sheet.getDataRange().getValues();
+  const ids = {};
+  for (let r = 1; r < data.length; r++) {
+    if (data[r][1] !== userId || !data[r][3]) continue;
+    const readAt = new Date(data[r][4]).getTime();
+    if (!isNaN(readAt) && readAt >= cutoff) ids[data[r][3]] = true;
+  }
+  return Object.keys(ids);
+}
+
+function selectChunksForPassage_(dueData, progressMap, index, band) {
+  const due = dueData.due_chunks || [];
+  const newChunks = dueData.new_chunks || [];
+  const selected = [];
+  const used = {};
+
+  function add(item) {
+    if (!item || used[item.chunk_id]) return;
+    const row = index[String(item.text).toLowerCase().trim()] || item;
+    used[row.chunk_id || item.chunk_id] = true;
+    selected.push({
+      chunk_id: row.chunk_id || item.chunk_id,
+      text: row.text || item.text,
+      cefr: row.cefr || item.cefr,
+    });
+  }
+
+  if (newChunks.length) add(newChunks[0]);
+
+  due.filter((c) => {
+    const prog = progressMap[c.chunk_id];
+    return prog && prog.srs_stage >= 1 && prog.srs_stage <= 3;
+  }).slice(0, 2).forEach(add);
+
+  due.filter((c) => {
+    const prog = progressMap[c.chunk_id];
+    return prog && prog.srs_stage >= 4;
+  }).slice(0, 1).forEach(add);
+
+  if (selected.length < 2) {
+    newChunks.slice(1, 4).forEach(add);
+  }
+  if (selected.length < 2) {
+    due.slice(0, 4).forEach(add);
+  }
+  if (selected.length < 2) {
+    getPassageTemplatesForBand_(band)[0].chunk_texts.forEach((text) => {
+      add(index[text.toLowerCase().trim()] || fallbackChunk_(text, band));
+    });
+  }
+
+  return selected.slice(0, 4);
+}
+
+function chunksCacheKey_(chunks) {
+  return chunks.map((c) => c.chunk_id).sort().join(',');
+}
+
+function findCachedPassage_(chunkKey, index, band, progressMap) {
+  const sheet = getSheet_(SHEET_NAMES.PASSAGES);
+  if (sheet.getLastRow() < 2) return null;
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const col = indexColumns_(headers);
+  for (let r = data.length - 1; r >= 1; r--) {
+    const ids = String(data[r][col.target_chunk_ids] || '').split(',').sort().join(',');
+    if (ids !== chunkKey) continue;
+    const fileId = data[r][col.drive_file_id];
+    if (!fileId) continue;
+    try {
+      const json = JSON.parse(DriveApp.getFileById(fileId).getBlob().getDataAsString('UTF-8'));
+      return hydratePassageFromJson_(json, index, band, progressMap);
+    } catch (e) { /* skip bad cache */ }
+  }
+  return null;
+}
+
+function generateDynamicPassage_(userId, band, index, progressMap, excludePassageIds) {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
+
+  const dueData = handleDueChunks_({ user_id: userId, cefr: band, limit: 20 });
+  const chunks = selectChunksForPassage_(dueData, progressMap, index, band);
+  if (chunks.length < 2) throw new Error('Not enough chunks to generate passage');
+
+  const cacheKey = chunksCacheKey_(chunks);
+  const cached = findCachedPassage_(cacheKey, index, band, progressMap);
+  if (cached && excludePassageIds.indexOf(cached.passage_id) < 0) return cached;
+
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const generated = callClaudeGeneratePassage_(chunks, band, apiKey);
+      if (!validatePassageChunks_(generated.text, chunks)) {
+        throw new Error('Generated passage missing target chunks');
+      }
+      const passage = buildPassageOutput_(generated, chunks, index, band, progressMap);
+      if (excludePassageIds.indexOf(passage.passage_id) >= 0) {
+        passage.passage_id = makePassageId_(chunks);
+      }
+      savePassageToDrive_(passage);
+      registerPassageMeta_(passage, chunks);
+      return passage;
+    } catch (err) {
+      lastErr = err;
+      Utilities.sleep(400);
+    }
+  }
+  throw lastErr || new Error('Passage generation failed');
+}
+
+function callClaudeGeneratePassage_(chunks, band, apiKey) {
+  const chunkList = chunks.map((c) => ({ chunk_id: c.chunk_id, text: c.text, cefr: c.cefr }));
+  const cefrHint = band === 'A1A2' ? 'A1/A2' : band;
+  const payload = {
+    model: ANTHROPIC_MODEL,
+    max_tokens: 4096,
+    messages: [{
+      role: 'user',
+      content: `Write a natural English reading passage for CEFR ${cefrHint} learners.
+
+Requirements:
+- 3 to 6 sentences, 60-120 words total
+- Use ONLY vocabulary appropriate for CEFR ${cefrHint} and below (i+1 principle)
+- Naturally embed ALL target chunks below (no forced or awkward insertion)
+- Provide accurate Japanese translation
+- For each chunk, report exact char_start and char_end (0-based, end exclusive) in the English text
+
+Return ONLY JSON, no markdown:
+{
+  "text": "full English passage as plain text",
+  "ja_translation": "natural Japanese translation",
+  "target_chunks": [
+    {"chunk_id":"...","text":"exact substring","char_start":0,"char_end":0}
+  ]
+}
+
+Target chunks:
+${JSON.stringify(chunkList)}`,
+    }],
+  };
+
+  const res = UrlFetchApp.fetch(ANTHROPIC_API_URL, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true,
+  });
+
+  if (res.getResponseCode() !== 200) {
+    throw new Error(`Anthropic ${res.getResponseCode()}: ${res.getContentText().slice(0, 400)}`);
+  }
+
+  const body = JSON.parse(res.getContentText());
+  const raw = body.content[0].text.trim().replace(/^```json?\s*/i, '').replace(/```\s*$/, '');
+  return JSON.parse(raw);
+}
+
+function validatePassageChunks_(text, chunks) {
+  const lower = String(text).toLowerCase();
+  return chunks.every((c) => lower.indexOf(String(c.text).toLowerCase()) >= 0);
+}
+
+function buildTextMarkupFromPositions_(text, targetChunks) {
+  const sorted = targetChunks.slice().sort((a, b) => b.char_start - a.char_start);
+  let markup = text;
+  sorted.forEach((c) => {
+    const start = Number(c.char_start);
+    const end = Number(c.char_end);
+    if (isNaN(start) || isNaN(end) || end <= start) return;
+    const slice = markup.slice(start, end);
+    if (!slice) return;
+    markup = markup.slice(0, start) + '{{' + slice + '}}' + markup.slice(end);
+  });
+  return markup;
+}
+
+function makePassageId_(chunks) {
+  const digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    chunks.map((c) => c.chunk_id).sort().join('|') + '|' + Date.now(),
+  );
+  const hex = digest.map((b) => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
+  return 'ps_' + hex.substring(0, 8);
+}
+
+function buildPassageOutput_(generated, chunks, index, band, progressMap) {
+  const target_chunks = (generated.target_chunks || []).map((tc) => {
+    const row = index[String(tc.text).toLowerCase().trim()] || chunks.find((c) => c.chunk_id === tc.chunk_id) || tc;
+    const prog = progressMap[row.chunk_id || tc.chunk_id];
+    return {
+      chunk_id: row.chunk_id || tc.chunk_id,
+      text: row.text || tc.text,
+      cefr: row.cefr || tc.cefr,
+      char_start: tc.char_start,
+      char_end: tc.char_end,
+      ja_translation: resolveJaTranslation_(row.text || tc.text, row.ja_translation),
+      example_sentence: row.example_sentence || '',
+      encounters: prog ? prog.encounter_count : 0,
+      srs_stage: prog ? prog.srs_stage : 0,
+      status: prog ? prog.status : 'new',
+    };
+  });
+
+  const textMarkup = buildTextMarkupFromPositions_(generated.text, target_chunks);
+  return {
+    passage_id: makePassageId_(chunks),
+    cefr_band: band,
+    text: generated.text,
+    text_markup: textMarkup,
+    ja_translation: generated.ja_translation || '',
+    target_chunks,
+  };
+}
+
+function hydratePassageFromJson_(json, index, band, progressMap) {
+  const chunks = (json.target_chunks || []).map((tc) => {
+    const row = index[String(tc.text).toLowerCase().trim()] || tc;
+    const prog = progressMap[row.chunk_id || tc.chunk_id];
+    return {
+      chunk_id: row.chunk_id || tc.chunk_id,
+      text: row.text || tc.text,
+      cefr: row.cefr || tc.cefr,
+      ja_translation: resolveJaTranslation_(row.text || tc.text, row.ja_translation),
+      example_sentence: row.example_sentence || '',
+      encounters: prog ? prog.encounter_count : 0,
+      srs_stage: prog ? prog.srs_stage : 0,
+      status: prog ? prog.status : 'new',
+    };
+  });
+  return {
+    passage_id: json.passage_id,
+    cefr_band: json.cefr_band || band,
+    text_markup: json.text_markup || buildTextMarkupFromPositions_(json.text, json.target_chunks || []),
+    ja_translation: json.ja_translation || '',
+    target_chunks: chunks,
+  };
+}
+
+function savePassageToDrive_(passage) {
+  const folder = getOrCreateSubfolder_(getDriveRoot_(), 'passages');
+  const payload = {
+    passage_id: passage.passage_id,
+    cefr_band: passage.cefr_band,
+    text: passage.text || passage.text_markup.replace(/\{\{|\}\}/g, ''),
+    text_markup: passage.text_markup,
+    ja_translation: passage.ja_translation,
+    target_chunks: passage.target_chunks,
+    generated_at: new Date().toISOString(),
+  };
+  const existing = folder.getFilesByName(passage.passage_id + '.json');
+  while (existing.hasNext()) existing.next().setTrashed(true);
+  const file = folder.createFile(
+    passage.passage_id + '.json',
+    JSON.stringify(payload, null, 2),
+    MimeType.PLAIN_TEXT,
+  );
+  passage.drive_file_id = file.getId();
+  return file.getId();
+}
+
+function registerPassageMeta_(passage, chunks) {
+  const sheet = getSheet_(SHEET_NAMES.PASSAGES);
+  const text = passage.text || passage.text_markup.replace(/\{\{|\}\}/g, '');
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  sheet.appendRow([
+    passage.passage_id,
+    passage.cefr_band,
+    passage.drive_file_id || '',
+    chunks.map((c) => c.chunk_id).join(','),
+    wordCount,
+    '',
+    new Date().toISOString(),
+  ]);
+}
+
+function pickTemplatePassage_(band, index, progressMap, excludePassageIds) {
+  const templates = getPassageTemplatesForBand_(band);
+  const exclude = {};
+  (excludePassageIds || []).forEach((id) => { exclude[id] = true; });
+  let candidates = templates.filter((t) => !exclude[t.passage_id]);
+  if (candidates.length === 0) candidates = templates;
+  const tpl = candidates[Math.floor(Math.random() * candidates.length)];
+  return enrichPassageTemplate_(tpl, index, band, progressMap);
 }
 
 function computeStatsFromIndex_(index, progressMap, band) {
@@ -635,22 +945,22 @@ function getPassageTemplatesForBand_(band) {
       {
         passage_id: 'ps_a1_01',
         cefr_band: 'A1A2',
-        text_markup: 'I {{look at}} the menu and {{pick up}} a cup of tea. There are {{a lot of}} people here today, but the waiter is friendly.',
-        ja_translation: 'メニューを見て、お茶を手に取った。今日はたくさん人がいるが、ウェイターは親切だ。',
+        text_markup: 'I walk into a small café near my house. I {{look at}} the menu on the wall and {{pick up}} a cup of hot tea. There are {{a lot of}} people here today, but the waiter smiles and helps me find a seat.',
+        ja_translation: '家の近くの小さなカフェに入る。壁のメニューを見て、温かいお茶を手に取る。今日はたくさん人がいるが、ウェイターは笑顔で席を見つけるのを手伝ってくれる。',
         chunk_texts: ['look at', 'pick up', 'a lot of'],
       },
       {
         passage_id: 'ps_a1_02',
         cefr_band: 'A1A2',
-        text_markup: 'We {{get up}} early and {{go out}} for a walk. I feel {{a little}} tired, but the air is nice.',
-        ja_translation: '早く起きて、散歩に出かけた。少し疲れているが、空気は気持ちいい。',
+        text_markup: 'We {{get up}} early on Saturday morning. We {{go out}} for a short walk in the park. I feel {{a little}} tired, but the morning air feels nice and fresh.',
+        ja_translation: '土曜の朝、私たちは早く起きる。公園へ少し散歩に出かける。少し疲れているが、朝の空気は気持ちよくて清々しい。',
         chunk_texts: ['get up', 'go out', 'a little'],
       },
       {
         passage_id: 'ps_a1_03',
         cefr_band: 'A1A2',
-        text_markup: 'She {{turn on}} the light and {{sit down}} at the desk. She has {{a few}} books to read tonight.',
-        ja_translation: '彼女は明かりをつけて、机に座った。今夜読む本が数冊ある。',
+        text_markup: 'It is late at night. I {{turn on}} the light in my room and {{sit down}} at my desk. I have {{a few}} books to read tonight. I want to finish them before I go to bed.',
+        ja_translation: '夜遅い。部屋の明かりをつけて、机に座る。今夜読む本が数冊ある。寝る前に読み終えたい。',
         chunk_texts: ['turn on', 'sit down', 'a few'],
       },
     ],
