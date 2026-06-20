@@ -7,6 +7,7 @@ import { MarginaliaPanel } from './components/MarginaliaPanel.jsx';
 import { Footer } from './components/Footer.jsx';
 import { TranslationOverlay } from './components/TranslationOverlay.jsx';
 import { ProcessingOverlay } from './components/ProcessingOverlay.jsx';
+import { ReadingTimerBar } from './components/ReadingTimerBar.jsx';
 import { fetchGeneratePassage, fetchSession, fetchStats } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
@@ -126,6 +127,8 @@ export default function App() {
         reviewing={stats.reviewing}
         graduated={stats.graduated}
       />
+
+      <ReadingTimerBar visible={!!reader.passage} remainingSeconds={reader.remainingSeconds} />
 
       <main className="reader">
         <PassageView

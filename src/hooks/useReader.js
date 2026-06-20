@@ -14,14 +14,27 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
   const [translationVisible, setTranslationVisible] = useState(false);
   const [hardFlash, setHardFlash] = useState(false);
   const [actionsDisabled, setActionsDisabled] = useState(false);
+  const [remainingSeconds, setRemainingSeconds] = useState(READING_TIME_LIMIT_SEC);
 
   const pageStartRef = useRef(Date.now());
   const translationTimerRef = useRef(null);
   const passagesKeyRef = useRef('');
   const actionPendingRef = useRef(false);
   const passiveFiredRef = useRef(false);
+  const remainingSecondsRef = useRef(READING_TIME_LIMIT_SEC);
 
   const passage = passages[currentIndex] ?? null;
+
+  const syncRemainingSeconds = useCallback((seconds) => {
+    remainingSecondsRef.current = seconds;
+    setRemainingSeconds(seconds);
+  }, []);
+
+  const resetPassiveTimer = useCallback(() => {
+    pageStartRef.current = Date.now();
+    passiveFiredRef.current = false;
+    syncRemainingSeconds(READING_TIME_LIMIT_SEC);
+  }, [syncRemainingSeconds]);
 
   useEffect(() => {
     const key = passages.map((p) => p.id).join('|');
@@ -167,19 +180,26 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
     releaseActionLock();
   }, [currentIndex, releaseActionLock]);
 
-  // Silent passive encounter after time limit (no UI)
+  // Countdown display + silent passive encounter at time limit (no forced navigation)
   useEffect(() => {
     if (!passage) return undefined;
-    pageStartRef.current = Date.now();
-    passiveFiredRef.current = false;
-    const timer = setTimeout(() => {
-      if (!passiveFiredRef.current) {
+    resetPassiveTimer();
+
+    const tick = () => {
+      const elapsed = Date.now() - pageStartRef.current;
+      const remaining = Math.max(0, Math.ceil((READING_TIME_LIMIT_MS - elapsed) / 1000));
+      syncRemainingSeconds(remaining);
+
+      if (remaining === 0 && !passiveFiredRef.current) {
         passiveFiredRef.current = true;
         recordEncounter('passive');
       }
-    }, READING_TIME_LIMIT_MS);
-    return () => clearTimeout(timer);
-  }, [currentIndex, passage, recordEncounter]);
+    };
+
+    tick();
+    const interval = setInterval(tick, 250);
+    return () => clearInterval(interval);
+  }, [currentIndex, passage, recordEncounter, resetPassiveTimer, syncRemainingSeconds]);
 
   useEffect(() => {
     const onKeyDown = (e) => {
@@ -217,6 +237,7 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
     translationVisible,
     hardFlash,
     actionsDisabled,
+    remainingSeconds,
     prevPassage,
     advanceToNext,
     selectChunk,
