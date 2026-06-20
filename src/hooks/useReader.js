@@ -4,6 +4,7 @@ import { CLOZE_PROBABILITY, READING_TIME_LIMIT_SEC, USER_ID } from '../lib/confi
 
 const READING_TIME_LIMIT_MS = READING_TIME_LIMIT_SEC * 1000;
 const TRANSITION_MS = 200;
+const ACTION_LOCK_TIMEOUT_MS = 12000;
 
 export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {}) {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -26,6 +27,7 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
   const translationTimerRef = useRef(null);
   const passagesKeyRef = useRef('');
   const actionPendingRef = useRef(false);
+  const actionLockTimerRef = useRef(null);
   const passiveFiredRef = useRef(false);
   const remainingSecondsRef = useRef(READING_TIME_LIMIT_SEC);
 
@@ -164,6 +166,8 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
   );
 
   const releaseActionLock = useCallback(() => {
+    clearTimeout(actionLockTimerRef.current);
+    actionLockTimerRef.current = null;
     actionPendingRef.current = false;
     setActionsDisabled(false);
   }, []);
@@ -172,8 +176,13 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
     if (actionPendingRef.current) return false;
     actionPendingRef.current = true;
     setActionsDisabled(true);
+    clearTimeout(actionLockTimerRef.current);
+    actionLockTimerRef.current = setTimeout(() => {
+      console.warn('[ERT] action lock timed out — releasing overlay');
+      releaseActionLock();
+    }, ACTION_LOCK_TIMEOUT_MS);
     return true;
-  }, []);
+  }, [releaseActionLock]);
 
   const prevPassage = useCallback(() => {
     transitionTo(currentIndex - 1, 'prev');
@@ -229,17 +238,17 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
   const finishPassageAction = useCallback(
     async (signal) => {
       stopTimer();
+      resetMarginalia();
       recordEncounter(signal);
       await advanceToNext({ autoStart: true });
     },
-    [advanceToNext, recordEncounter, stopTimer],
+    [advanceToNext, recordEncounter, resetMarginalia, stopTimer],
   );
 
   const handleGotIt = useCallback(async () => {
     if (!canInteract || !beginAction()) return;
     try {
       await finishPassageAction('got_it');
-      await new Promise((resolve) => setTimeout(resolve, TRANSITION_MS));
     } finally {
       releaseActionLock();
     }
@@ -249,13 +258,12 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
     if (!canInteract || !beginAction()) return;
     try {
       await finishPassageAction('still_hard');
-      setHardFlash(true);
-      await new Promise((resolve) => setTimeout(resolve, 240));
-      setHardFlash(false);
-      await new Promise((resolve) => setTimeout(resolve, Math.max(0, TRANSITION_MS - 240)));
     } finally {
       releaseActionLock();
     }
+    setHardFlash(true);
+    await new Promise((resolve) => setTimeout(resolve, 240));
+    setHardFlash(false);
   }, [beginAction, canInteract, finishPassageAction, releaseActionLock]);
 
   const selectChunk = useCallback(
@@ -287,6 +295,10 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
   useEffect(() => {
     releaseActionLock();
   }, [currentIndex, releaseActionLock]);
+
+  useEffect(() => {
+    return () => clearTimeout(actionLockTimerRef.current);
+  }, []);
 
   // Countdown display + silent passive encounter at time limit
   useEffect(() => {

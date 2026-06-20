@@ -14,7 +14,10 @@ import { fetchSession, fetchStats } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
 import { USER_ID } from './lib/config.js';
+import { withTimeout } from './lib/async.js';
 import { useI18n } from './i18n/I18nProvider.jsx';
+
+const ADVANCE_PREFETCH_TIMEOUT_MS = 8000;
 
 function filterMockByBand(band) {
   if (band === 'A1A2') {
@@ -113,7 +116,16 @@ export default function App() {
   useEffect(() => {
     advancePastEndRef.current = async () => {
       const seenIds = passagesRef.current.map((p) => p.id);
-      let next = await consumePrefetched();
+      let next = null;
+      try {
+        next = await withTimeout(
+          consumePrefetched(),
+          ADVANCE_PREFETCH_TIMEOUT_MS,
+          'prefetch next passage',
+        );
+      } catch (err) {
+        console.warn('[ERT] prefetch timed out or failed:', err);
+      }
       if (!next) {
         next = pickUnseenMockPassage(cefrBand, seenIds);
       }
