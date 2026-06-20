@@ -146,7 +146,7 @@ function writeRowsInBatches_(sheet, rows) {
   for (let i = 0; i < rows.length; i += BATCH) {
     const batch = rows.slice(i, i + BATCH);
     const startRow = sheet.getLastRow() + 1;
-    sheet.getRange(startRow, 1, startRow + batch.length - 1, batch[0].length).setValues(batch);
+    sheet.getRange(startRow, 1, batch.length, batch[0].length).setValues(batch);
   }
 }
 
@@ -315,7 +315,7 @@ function handleLogEncounter_(body) {
 
   if (rows.length > 0) {
     const startRow = sheet.getLastRow() + 1;
-    sheet.getRange(startRow, 1, startRow + rows.length - 1, rows[0].length).setValues(rows);
+    sheet.getRange(startRow, 1, rows.length, rows[0].length).setValues(rows);
   }
   return { ok: true, logged: rows.length };
 }
