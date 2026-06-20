@@ -7,6 +7,8 @@ import { MarginaliaPanel } from './components/MarginaliaPanel.jsx';
 import { Footer } from './components/Footer.jsx';
 import { TranslationOverlay } from './components/TranslationOverlay.jsx';
 import { ProcessingOverlay } from './components/ProcessingOverlay.jsx';
+import { ReadingTimerBar } from './components/ReadingTimerBar.jsx';
+import { StartReadingOverlay } from './components/StartReadingOverlay.jsx';
 import { fetchSession } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
@@ -100,7 +102,13 @@ export default function App() {
         totalPages={reader.totalPassages}
       />
 
+      <ReadingTimerBar visible={reader.isReadingStarted} remainingSeconds={reader.remainingSeconds} />
+
       <main className="reader">
+        <StartReadingOverlay
+          visible={!reader.isReadingStarted && !!reader.passage}
+          onStart={reader.startReading}
+        />
         <PassageView
           passage={reader.passage}
           activeChunkId={reader.activeChunkId}
@@ -124,7 +132,7 @@ export default function App() {
         onStillHard={reader.handleStillHard}
         onGotIt={reader.handleGotIt}
         hardFlash={reader.hardFlash}
-        disabled={reader.actionsDisabled}
+        disabled={reader.actionsDisabled || !reader.isReadingStarted}
       />
 
       <TranslationOverlay text={reader.passage?.ja ?? ''} visible={reader.translationVisible} />

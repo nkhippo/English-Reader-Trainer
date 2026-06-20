@@ -28,6 +28,9 @@ export const translations = {
     cefrGroupAria: 'CEFR level',
     loading: 'Loading…',
     processing: 'Saving…',
+    startReading: 'Start reading',
+    startHint: 'Press start when you are ready. The timer begins once you begin reading.',
+    timeRemaining: (sec) => `${sec}s left`,
   },
   ja: {
     reviewing: '復習中',
@@ -44,5 +47,8 @@ export const translations = {
     cefrGroupAria: 'CEFR レベル',
     loading: '読み込み中…',
     processing: '処理中…',
+    startReading: '読み始める',
+    startHint: '準備ができたら開始してください。タイマーは読み始めてからカウントされます。',
+    timeRemaining: (sec) => `残り ${sec} 秒`,
   },
 };
