@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>English-Reader-Trainer — Prototype</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --color-page: #F7F4ED;
+      --color-ink: #1A2236;
+      --color-ink-soft: #4A5066;
+      --color-highlight: rgba(255, 224, 102, 0.55);
+      --color-highlight-line: #D4A800;
+      --color-marginalia: #5C6470;
+      --color-marginalia-bg: #F1EDE3;
+      --color-rule: #D5CFC0;
+      --color-due: #B83D2E;
+      --color-graduated: #4A7A4A;
+
+      --font-body: 'Crimson Pro', Georgia, serif;
+      --font-ui: 'Inter', -apple-system, system-ui, sans-serif;
+
+      --reading-max-width: 560px;
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      background: var(--color-page);
+      color: var(--color-ink);
+      font-family: var(--font-body);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    button {
+      font-family: inherit;
+    }
+
+    /* ===== App layout ===== */
+    .app {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      height: 100vh;
+    }
+
+    /* ===== Header ===== */
+    .header {
+      padding: 14px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--color-rule);
+      font-family: var(--font-ui);
+      font-size: 12px;
+      color: var(--color-ink-soft);
+      letter-spacing: 0.02em;
+    }
+
+    .level-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 11px;
+      border: 1px solid var(--color-ink);
+      border-radius: 100px;
+      font-weight: 600;
+      color: var(--color-ink);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+    }
+
+    .level-pill__dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--color-due);
+    }
+
+    .stats {
+      display: flex;
+      gap: 22px;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+
+    .stat__num {
+      font-weight: 600;
+      color: var(--color-ink);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ===== Reader main ===== */
+    .reader {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .reader__passage {
+      padding: 72px 48px 40px;
+      overflow-y: auto;
+      position: relative;
+      transition: opacity 220ms ease, transform 220ms ease;
+    }
+
+    .passage {
+      max-width: var(--reading-max-width);
+      margin: 0 auto;
+      font-size: 22px;
+      line-height: 1.72;
+      color: var(--color-ink);
+      letter-spacing: 0.005em;
+    }
+
+    .passage p + p {
+      margin-top: 1.25em;
+    }
+
+    .chunk {
+      background: var(--color-highlight);
+      border-bottom: 1px solid var(--color-highlight-line);
+      cursor: pointer;
+      transition: background 160ms ease;
+      padding: 0 1px;
+      border-radius: 1px;
+    }
+
+    .chunk:hover {
+      background: rgba(255, 224, 102, 0.82);
+    }
+
+    .chunk--active {
+      background: rgba(255, 224, 102, 0.95);
+      box-shadow: 0 0 0 2px rgba(255, 224, 102, 0.4);
+    }
+
+    /* Page indicator */
+    .page-indicator {
+      position: absolute;
+      bottom: 24px;
+      right: 32px;
+      font-family: var(--font-ui);
+      font-size: 10px;
+      color: var(--color-marginalia);
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    /* ===== Marginalia ===== */
+    .marginalia {
+      border-left: 1px solid var(--color-rule);
+      padding: 72px 32px 40px;
+      overflow-y: auto;
+      background: var(--color-marginalia-bg);
+      position: relative;
+      transition: opacity 180ms ease;
+    }
+
+    .marginalia__close {
+      display: none;
+    }
+
+    .marginalia__content {
+      transition: opacity 160ms ease;
+    }
+
+    .marginalia__content.is-fading {
+      opacity: 0;
+    }
+
+    .marginalia__empty {
+      font-family: var(--font-ui);
+      font-size: 11px;
+      color: var(--color-marginalia);
+      font-style: italic;
+      line-height: 1.6;
+      letter-spacing: 0.02em;
+    }
+
+    .note {
+      font-family: var(--font-body);
+      color: var(--color-marginalia);
+    }
+
+    .note__chunk {
+      font-size: 26px;
+      color: var(--color-ink);
+      font-weight: 500;
+      display: block;
+      margin-bottom: 6px;
+      letter-spacing: -0.005em;
+    }
+
+    .note__translation {
+      font-size: 15px;
+      font-family: var(--font-ui);
+      color: var(--color-ink-soft);
+      margin-bottom: 18px;
+      line-height: 1.5;
+    }
+
+    .note__rule {
+      border: none;
+      border-top: 1px solid var(--color-rule);
+      margin: 16px 0 14px;
+    }
+
+    .note__meta {
+      font-family: var(--font-ui);
+      font-size: 10px;
+      color: var(--color-marginalia);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .note__meta-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .note__meta-label {
+      opacity: 0.7;
+      flex: 0 0 80px;
+    }
+
+    .note__meta-value {
+      color: var(--color-ink);
+      font-weight: 600;
+    }
+
+    .stage-dots {
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: transparent;
+      border: 1px solid var(--color-marginalia);
+    }
+
+    .dot--filled {
+      background: var(--color-marginalia);
+    }
+
+    .note__example {
+      font-style: italic;
+      font-size: 16px;
+      color: var(--color-marginalia);
+      line-height: 1.55;
+      padding: 12px 0 0 14px;
+      border-left: 2px solid var(--color-rule);
+      margin-top: 4px;
+    }
+
+    .note__example-label {
+      display: block;
+      font-style: normal;
+      font-family: var(--font-ui);
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-marginalia);
+      opacity: 0.6;
+      margin-bottom: 8px;
+    }
+
+    /* ===== Footer ===== */
+    .footer {
+      padding: 16px 32px;
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+      border-top: 1px solid var(--color-rule);
+      background: var(--color-page);
+    }
+
+    .btn {
+      font-family: var(--font-ui);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 12px 28px;
+      border: 1px solid var(--color-ink);
+      background: transparent;
+      color: var(--color-ink);
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      transition: all 150ms ease;
+      border-radius: 0;
+    }
+
+    .btn:hover {
+      background: var(--color-ink);
+      color: var(--color-page);
+    }
+
+    .btn--primary {
+      background: var(--color-ink);
+      color: var(--color-page);
+    }
+
+    .btn--primary:hover {
+      background: var(--color-ink-soft);
+      border-color: var(--color-ink-soft);
+    }
+
+    .btn--ghost {
+      border-color: var(--color-rule);
+      color: var(--color-ink-soft);
+    }
+
+    .btn--ghost:hover {
+      border-color: var(--color-ink-soft);
+      background: transparent;
+      color: var(--color-ink);
+    }
+
+    /* ===== Translation overlay ===== */
+    .translation-overlay {
+      position: fixed;
+      bottom: 84px;
+      left: 50%;
+      transform: translateX(-50%) translateY(16px);
+      background: var(--color-ink);
+      color: var(--color-page);
+      padding: 16px 24px;
+      font-family: var(--font-body);
+      font-size: 16px;
+      line-height: 1.5;
+      max-width: 560px;
+      width: calc(100% - 48px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 220ms ease, transform 220ms ease;
+      z-index: 20;
+      letter-spacing: 0.01em;
+    }
+
+    .translation-overlay.is-visible {
+      opacity: 0.96;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ===== Mobile ===== */
+    @media (max-width: 768px) {
+      .reader {
+        grid-template-columns: 1fr;
+      }
+
+      .reader__passage {
+        padding: 40px 24px 32px;
+      }
+
+      .passage {
+        font-size: 19px;
+        line-height: 1.7;
+      }
+
+      .marginalia {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        border-left: none;
+        border-top: 1px solid var(--color-rule);
+        padding: 32px 24px 24px;
+        transform: translateY(100%);
+        transition: transform 320ms cubic-bezier(0.16, 0.84, 0.44, 1);
+        max-height: 68vh;
+        z-index: 10;
+        box-shadow: 0 -4px 28px rgba(26, 34, 54, 0.08);
+      }
+
+      .marginalia.is-open {
+        transform: translateY(0);
+      }
+
+      .marginalia__close {
+        display: block;
+        position: absolute;
+        top: 8px;
+        right: 12px;
+        background: transparent;
+        border: none;
+        color: var(--color-marginalia);
+        font-size: 26px;
+        cursor: pointer;
+        line-height: 1;
+        padding: 8px 12px;
+      }
+
+      .header {
+        padding: 11px 18px;
+        font-size: 10px;
+      }
+
+      .stats {
+        gap: 14px;
+      }
+
+      .footer {
+        padding: 12px 18px;
+      }
+
+      .btn {
+        padding: 11px 16px;
+        flex: 1;
+        text-align: center;
+      }
+
+      .page-indicator {
+        bottom: 12px;
+        right: 18px;
+      }
+    }
+
+    /* Reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <span class="level-pill">
+        <span class="level-pill__dot"></span>
+        B1
+      </span>
+      <div class="stats">
+        <span class="stat"><span class="stat__num" id="stat-reviewing">147</span> reviewing</span>
+        <span class="stat"><span class="stat__num" id="stat-graduated">23</span> graduated</span>
+        <span class="stat" id="stat-page"><span class="stat__num" id="page-current">1</span> / <span id="page-total">4</span></span>
+      </div>
+    </header>
+
+    <main class="reader">
+      <section class="reader__passage" id="passage-area">
+        <article class="passage" id="passage"></article>
+        <div class="page-indicator">
+          <span id="page-indicator-text">PASSAGE 01</span>
+        </div>
+      </section>
+
+      <aside class="marginalia" id="marginalia">
+        <button class="marginalia__close" id="marginalia-close" aria-label="Close">×</button>
+        <div class="marginalia__content" id="marginalia-content">
+          <div class="marginalia__empty">
+            Tap any highlighted phrase to read its note.
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <button class="btn btn--ghost" id="btn-hard">⊘  Still hard</button>
+      <button class="btn btn--primary" id="btn-ok">Got it  →</button>
+    </footer>
+
+    <div class="translation-overlay" id="translation-overlay"></div>
+  </div>
+
+  <script>
+    // =====================================================
+    //  MOCK DATA
+    //  In production: fetched from GAS /generate_passage
+    // =====================================================
+    const PASSAGES = [
+      {
+        id: 'ps_001',
+        cefr: 'B1',
+        text: "The restaurant was packed when we arrived, but the host {{managed to}} find us a table near the window. We sat down and {{picked up}} the menus, scanning the appetizers first. I ordered without much thought. It {{turned out}} to be the best meal I'd had all week.",
+        ja: "私たちが到着したとき、レストランは混んでいたが、店主はなんとか窓際の席を見つけてくれた。座って、メニューを手に取り、まず前菜から目を通した。あまり考えずに注文した。結果的に、その週で食べた中で最高の食事だった。",
+        chunks: [
+          { id: 'managed_to', text: 'managed to', ja: 'なんとか〜することができた', cefr: 'B1', encounters: 4, stage: 3, example: 'She managed to finish the report by midnight.' },
+          { id: 'picked_up', text: 'picked up', ja: '手に取る／拾い上げる', cefr: 'A2', encounters: 6, stage: 4, example: 'He picked up the phone on the first ring.' },
+          { id: 'turned_out', text: 'turned out', ja: '結果的に〜だった／判明した', cefr: 'B1', encounters: 2, stage: 1, example: 'It turned out that he was right all along.' }
+        ]
+      },
+      {
+        id: 'ps_002',
+        cefr: 'B1',
+        text: "I had been planning the trip for months, but on the morning of departure, I {{ran into}} an old friend at the airport. We hadn't seen each other in years. We {{caught up}} over coffee, and I almost missed my flight. Some things, I suppose, are {{worth the risk}}.",
+        ja: "数か月もかけて旅の計画を立ててきたが、出発の朝、空港で旧友にばったり会った。何年も会っていなかった。コーヒーを飲みながら近況を交わし、もう少しでフライトに乗り遅れるところだった。そういうものなのだろう、リスクに見合う価値のあるものというのは。",
+        chunks: [
+          { id: 'ran_into', text: 'ran into', ja: '偶然出会う／ばったり会う', cefr: 'B1', encounters: 3, stage: 2, example: 'I ran into my professor at the bookstore yesterday.' },
+          { id: 'caught_up', text: 'caught up', ja: '近況を語り合う', cefr: 'B1', encounters: 1, stage: 0, example: "Let's catch up over lunch sometime." },
+          { id: 'worth_the_risk', text: 'worth the risk', ja: 'リスクに見合う価値がある', cefr: 'B2', encounters: 1, stage: 0, example: 'Starting your own business is worth the risk.' }
+        ]
+      },
+      {
+        id: 'ps_003',
+        cefr: 'B1',
+        text: "When the meeting started, no one {{spoke up}} at first. The room felt heavy with hesitation. Finally, Sarah cleared her throat and {{laid out}} her proposal. By the end, everyone agreed it was the most reasonable plan we had {{come up with}} in months.",
+        ja: "会議が始まったとき、最初は誰も発言しなかった。部屋には躊躇いが重く漂っていた。やがてサラが咳払いをして、彼女の提案を整然と並べた。終わる頃には、ここ数か月で思いついた最も理にかなった計画だと全員が同意していた。",
+        chunks: [
+          { id: 'spoke_up', text: 'spoke up', ja: '発言する／声を上げる', cefr: 'B1', encounters: 5, stage: 4, example: 'No one spoke up against the decision.' },
+          { id: 'laid_out', text: 'laid out', ja: '整然と提示する／詳しく説明する', cefr: 'B2', encounters: 2, stage: 1, example: 'The document lays out the new policy clearly.' },
+          { id: 'come_up_with', text: 'come up with', ja: '思いつく／考え出す', cefr: 'B1', encounters: 7, stage: 5, example: 'She came up with a brilliant idea on the way home.' }
+        ]
+      },
+      {
+        id: 'ps_004',
+        cefr: 'B1',
+        text: "She {{stayed up}} late reading the manuscript he had sent. By morning, she had {{made up}} her mind: it was good, but the ending needed work. She called him before breakfast. He {{took it well}}, considering she was suggesting he rewrite half the book.",
+        ja: "彼女は彼が送ってきた原稿を遅くまで読み続けた。朝までには決心していた。良いけれど、結末は書き直しが必要だ。朝食の前に彼に電話をした。本の半分を書き直してほしいと提案しているのに、彼はうまく受け止めてくれた。",
+        chunks: [
+          { id: 'stayed_up', text: 'stayed up', ja: '夜更かしする', cefr: 'A2', encounters: 8, stage: 5, example: 'I stayed up all night studying for the exam.' },
+          { id: 'made_up', text: 'made up', ja: '決心する（make up one\'s mind）', cefr: 'B1', encounters: 3, stage: 2, example: "I haven't made up my mind yet about the offer." },
+          { id: 'took_it_well', text: 'took it well', ja: 'うまく受け止めた／冷静に受け止めた', cefr: 'B2', encounters: 1, stage: 0, example: 'He took the criticism well and started improving.' }
+        ]
+      }
+    ];
+
+    // =====================================================
+    //  STATE
+    // =====================================================
+    let currentPassageIndex = 0;
+    let activeChunkId = null;
+
+    // =====================================================
+    //  DOM
+    // =====================================================
+    const $ = (id) => document.getElementById(id);
+    const passageEl = $('passage');
+    const passageAreaEl = $('passage-area');
+    const marginaliaEl = $('marginalia');
+    const marginaliaContentEl = $('marginalia-content');
+    const marginaliaCloseEl = $('marginalia-close');
+    const pageCurrent = $('page-current');
+    const pageTotal = $('page-total');
+    const pageIndicatorText = $('page-indicator-text');
+    const btnHard = $('btn-hard');
+    const btnOk = $('btn-ok');
+    const translationOverlay = $('translation-overlay');
+
+    // =====================================================
+    //  RENDER
+    // =====================================================
+    function renderPassage() {
+      const passage = PASSAGES[currentPassageIndex];
+      const parts = passage.text.split(/(\{\{[^}]+\}\})/);
+      let html = '';
+
+      parts.forEach(part => {
+        if (part.startsWith('{{') && part.endsWith('}}')) {
+          const chunkText = part.slice(2, -2);
+          const chunk = passage.chunks.find(c => c.text === chunkText);
+          if (chunk) {
+            html += `<mark class="chunk" data-chunk-id="${chunk.id}">${chunkText}</mark>`;
+          } else {
+            html += chunkText;
+          }
+        } else {
+          html += part;
+        }
+      });
+
+      passageEl.innerHTML = `<p>${html}</p>`;
+
+      pageCurrent.textContent = String(currentPassageIndex + 1);
+      pageTotal.textContent = String(PASSAGES.length);
+      pageIndicatorText.textContent = `PASSAGE ${String(currentPassageIndex + 1).padStart(2, '0')} · ${passage.cefr}`;
+
+      resetMarginalia();
+      bindChunkListeners();
+    }
+
+    function resetMarginalia() {
+      activeChunkId = null;
+      marginaliaEl.classList.remove('is-open');
+      marginaliaContentEl.innerHTML = `
+        <div class="marginalia__empty">
+          Tap any highlighted phrase to read its note.
+        </div>
+      `;
+    }
+
+    function bindChunkListeners() {
+      passageEl.querySelectorAll('.chunk').forEach(el => {
+        el.addEventListener('click', e => {
+          e.stopPropagation();
+          const chunkId = el.dataset.chunkId;
+          showChunkNote(chunkId);
+          passageEl.querySelectorAll('.chunk').forEach(c => c.classList.remove('chunk--active'));
+          el.classList.add('chunk--active');
+        });
+      });
+    }
+
+    function renderStageDots(stage) {
+      let dots = '';
+      for (let i = 0; i < 5; i++) {
+        dots += `<span class="dot ${i < stage ? 'dot--filled' : ''}"></span>`;
+      }
+      return `<span class="stage-dots">${dots}</span>`;
+    }
+
+    function showChunkNote(chunkId) {
+      const passage = PASSAGES[currentPassageIndex];
+      const chunk = passage.chunks.find(c => c.id === chunkId);
+      if (!chunk) return;
+
+      activeChunkId = chunkId;
+
+      marginaliaContentEl.classList.add('is-fading');
+      setTimeout(() => {
+        marginaliaContentEl.innerHTML = `
+          <div class="note">
+            <span class="note__chunk">${chunk.text}</span>
+            <div class="note__translation">${chunk.ja}</div>
+            <hr class="note__rule">
+            <div class="note__meta">
+              <div class="note__meta-item">
+                <span class="note__meta-label">CEFR</span>
+                <span class="note__meta-value">${chunk.cefr}</span>
+              </div>
+              <div class="note__meta-item">
+                <span class="note__meta-label">Encounters</span>
+                <span class="note__meta-value">${chunk.encounters}</span>
+              </div>
+              <div class="note__meta-item">
+                <span class="note__meta-label">Stage</span>
+                ${renderStageDots(chunk.stage)}
+              </div>
+            </div>
+            <div class="note__example">
+              <span class="note__example-label">Example</span>
+              ${chunk.example}
+            </div>
+          </div>
+        `;
+        marginaliaContentEl.classList.remove('is-fading');
+        marginaliaEl.classList.add('is-open');
+      }, 140);
+    }
+
+    // =====================================================
+    //  NAVIGATION
+    // =====================================================
+    function transitionTo(newIndex, direction) {
+      if (newIndex < 0 || newIndex >= PASSAGES.length) return;
+      const offsetY = direction === 'next' ? -10 : 10;
+      passageAreaEl.style.opacity = '0';
+      passageAreaEl.style.transform = `translateY(${offsetY}px)`;
+      setTimeout(() => {
+        currentPassageIndex = newIndex;
+        renderPassage();
+        passageAreaEl.style.transform = `translateY(${-offsetY}px)`;
+        // Force reflow
+        passageAreaEl.offsetHeight;
+        passageAreaEl.style.opacity = '1';
+        passageAreaEl.style.transform = 'translateY(0)';
+      }, 200);
+    }
+
+    function nextPassage() {
+      transitionTo(currentPassageIndex + 1, 'next');
+    }
+
+    function prevPassage() {
+      transitionTo(currentPassageIndex - 1, 'prev');
+    }
+
+    // =====================================================
+    //  TRANSLATION OVERLAY
+    // =====================================================
+    let translationTimer = null;
+    function showTranslation() {
+      const passage = PASSAGES[currentPassageIndex];
+      translationOverlay.textContent = passage.ja;
+      translationOverlay.classList.add('is-visible');
+      clearTimeout(translationTimer);
+      translationTimer = setTimeout(() => {
+        translationOverlay.classList.remove('is-visible');
+      }, 3500);
+    }
+
+    // =====================================================
+    //  EVENTS
+    // =====================================================
+    btnOk.addEventListener('click', () => {
+      // In production: POST /update_progress { signal: 'got_it' }
+      nextPassage();
+    });
+
+    btnHard.addEventListener('click', () => {
+      // In production: POST /update_progress { signal: 'still_hard' }
+      btnHard.style.background = 'var(--color-due)';
+      btnHard.style.borderColor = 'var(--color-due)';
+      btnHard.style.color = 'var(--color-page)';
+      setTimeout(() => {
+        btnHard.removeAttribute('style');
+        nextPassage();
+      }, 240);
+    });
+
+    marginaliaCloseEl.addEventListener('click', () => {
+      marginaliaEl.classList.remove('is-open');
+      passageEl.querySelectorAll('.chunk').forEach(c => c.classList.remove('chunk--active'));
+    });
+
+    // Tap on passage area (not on chunk) → translation overlay
+    passageEl.addEventListener('click', e => {
+      if (e.target.closest('.chunk')) return;
+      showTranslation();
+    });
+
+    // Keyboard
+    document.addEventListener('keydown', e => {
+      if (e.key === 'ArrowRight' || e.key === ' ') {
+        e.preventDefault();
+        nextPassage();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        prevPassage();
+      } else if (e.key === 'Escape') {
+        marginaliaEl.classList.remove('is-open');
+      } else if (e.key === 't' || e.key === 'T') {
+        showTranslation();
+      }
+    });
+
+    // Touch swipe
+    let touchStartY = null;
+    let touchStartX = null;
+    passageAreaEl.addEventListener('touchstart', e => {
+      touchStartY = e.touches[0].clientY;
+      touchStartX = e.touches[0].clientX;
+    }, { passive: true });
+
+    passageAreaEl.addEventListener('touchend', e => {
+      if (touchStartY === null) return;
+      const endY = e.changedTouches[0].clientY;
+      const endX = e.changedTouches[0].clientX;
+      const dy = endY - touchStartY;
+      const dx = endX - touchStartX;
+
+      if (Math.abs(dy) > 70 && Math.abs(dy) > Math.abs(dx)) {
+        if (dy < 0) nextPassage();
+        else prevPassage();
+      }
+      touchStartY = null;
+      touchStartX = null;
+    });
+
+    // =====================================================
+    //  INIT
+    // =====================================================
+    renderPassage();
+  </script>
+</body>
+</html>
