@@ -51,6 +51,7 @@ button {
 }
 
 .header {
+  grid-row: 1;
   padding: 14px 32px;
   display: flex;
   align-items: center;
@@ -138,6 +139,7 @@ button {
 }
 
 .reading-timer {
+  grid-row: 2;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -172,6 +174,8 @@ button {
 }
 
 .start-overlay {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
   position: absolute;
   inset: 0;
   z-index: 15;
@@ -261,13 +265,18 @@ button {
 }
 
 .reader {
+  grid-row: 3;
   display: grid;
   grid-template-columns: 1fr 340px;
+  grid-template-rows: 1fr;
   overflow: hidden;
   position: relative;
+  min-height: 0;
 }
 
 .reader__passage {
+  grid-column: 1;
+  grid-row: 1;
   padding: 72px 48px 40px;
   overflow-y: auto;
   position: relative;
@@ -347,6 +356,8 @@ html[lang='ja'] .note__meta {
 }
 
 .marginalia {
+  grid-column: 2;
+  grid-row: 1;
   border-left: 1px solid var(--color-rule);
   padding: 72px 32px 40px;
   overflow-y: auto;
@@ -484,10 +495,12 @@ html[lang='ja'] .note__meta {
 }
 
 .footer {
+  grid-row: 4;
   padding: 16px 32px;
   display: flex;
   gap: 12px;
   justify-content: space-between;
+  align-items: center;
   border-top: 1px solid var(--color-rule);
   background: var(--color-page);
 }
@@ -504,6 +517,7 @@ html[lang='ja'] .note__meta {
   letter-spacing: 0.04em;
   transition: all 150ms ease;
   border-radius: 0;
+  flex: 0 0 auto;
 }
 
 .btn:hover:not(:disabled) {
