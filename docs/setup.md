@@ -16,7 +16,7 @@ After setup, press **Got it** or **Still hard** and confirm rows appear in the `
 
 | Resource | URL / ID |
 |----------|----------|
-| GAS Web App | `https://script.google.com/macros/s/AKfycbyT3MMANbfFnmw3tZTq1oZ0UapSOHbeNQBMuRdBgnT9jy8D1j90IDJ_eHYMAzFE5re_/exec` |
+| GAS Web App | `https://script.google.com/macros/s/AKfycbzePqBlIiQnIffrXAY_HhcjWj8cCIdZGv9SlV4opdjVr8_9edL73qURuggwOO0Ce74/exec` |
 | Spreadsheet | [English Reader Trainer](https://docs.google.com/spreadsheets/d/1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw/edit) — ID: `1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw` |
 | Drive root | [EnglishReaderTrainer](https://drive.google.com/drive/folders/1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI) — ID: `1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI` |
 
