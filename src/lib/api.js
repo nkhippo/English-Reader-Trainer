@@ -102,8 +102,12 @@ export async function fetchDueChunks({ userId, cefr, limit = 20 }) {
   return callAction('due_chunks', { user_id: userId, cefr, limit });
 }
 
-export async function fetchGeneratePassage({ userId, cefr }) {
-  return callAction('generate_passage', { user_id: userId, cefr });
+export async function fetchGeneratePassage({ userId, cefr, excludePassageIds = [] }) {
+  return callAction('generate_passage', {
+    user_id: userId,
+    cefr,
+    exclude_passage_ids: excludePassageIds,
+  });
 }
 
 export async function logEncounter({

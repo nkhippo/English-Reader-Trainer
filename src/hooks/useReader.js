@@ -71,11 +71,15 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
 
   useEffect(() => {
     const key = passages.map((p) => p.id).join('|');
-    if (passagesKeyRef.current && passagesKeyRef.current !== key) {
-      setCurrentIndex(0);
-      setActiveChunkId(null);
-      setMarginaliaOpen(false);
-      resetReadingTimer();
+    const prevKey = passagesKeyRef.current;
+    if (prevKey && prevKey !== key) {
+      const isAppend = key.startsWith(`${prevKey}|`);
+      if (!isAppend) {
+        setCurrentIndex(0);
+        setActiveChunkId(null);
+        setMarginaliaOpen(false);
+        resetReadingTimer();
+      }
     }
     passagesKeyRef.current = key;
   }, [passages, resetReadingTimer]);

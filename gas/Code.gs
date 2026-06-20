@@ -593,12 +593,21 @@ function handleDueChunks_(body) {
   return { due_chunks: dueOut, new_chunks: newOut, cefr_band: band };
 }
 
+function mergeExcludePassageIds_(userId, clientIds) {
+  const exclude = {};
+  getRecentPassageIds_(userId, 24).forEach((id) => { exclude[id] = true; });
+  (clientIds || []).forEach((id) => {
+    if (id) exclude[id] = true;
+  });
+  return Object.keys(exclude);
+}
+
 function handleGeneratePassage_(body) {
   const userId = body.user_id || 'naoya';
   const band = normalizeCefrBand_(body.cefr || 'B1');
   const index = loadChunksIndex_();
   const progressMap = loadUserProgressMap_(userId);
-  const excludePassageIds = getRecentPassageIds_(userId, 24);
+  const excludePassageIds = mergeExcludePassageIds_(userId, body.exclude_passage_ids);
   const passage = buildPassageForUser_(userId, band, index, progressMap, excludePassageIds);
   return { passages: [passage], cefr_band: band };
 }

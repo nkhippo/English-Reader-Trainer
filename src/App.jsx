@@ -32,16 +32,18 @@ function firstPassageFromResponse(res, band) {
   return filterMockByBand(band)[0] ?? null;
 }
 
-function randomMockPassage(band) {
-  const mock = filterMockByBand(band);
-  if (mock.length === 0) return null;
-  return mock[Math.floor(Math.random() * mock.length)];
+function pickUnseenMockPassage(band, seenIds) {
+  const seen = new Set(seenIds);
+  const candidates = filterMockByBand(band).filter((p) => !seen.has(p.id));
+  if (candidates.length === 0) return null;
+  return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
 export default function App() {
   const { t } = useI18n();
   const [cefrBand, setCefrBand] = useState(getStoredCefrBand);
   const [passages, setPassages] = useState([]);
+  const passagesRef = useRef(passages);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ reviewing: 0, graduated: 0 });
   const advancePastEndRef = useRef(async () => false);
@@ -89,6 +91,10 @@ export default function App() {
     };
   }, [cefrBand]);
 
+  useEffect(() => {
+    passagesRef.current = passages;
+  }, [passages]);
+
   const handleProgressUpdate = useCallback(async () => {
     await refreshStats(cefrBand);
   }, [cefrBand, refreshStats]);
@@ -100,20 +106,23 @@ export default function App() {
 
   const { consumePrefetched } = usePassagePrefetch({
     cefrBand,
-    currentPassageId: reader.passage?.id,
+    seenPassageIds: passages.map((p) => p.id),
     enabled: !loading && passages.length > 0,
   });
 
   useEffect(() => {
     advancePastEndRef.current = async () => {
-      const next = await consumePrefetched();
-      if (next) {
-        setPassages((prev) => [...prev, next]);
-        return true;
+      const seenIds = passagesRef.current.map((p) => p.id);
+      let next = await consumePrefetched();
+      if (!next) {
+        next = pickUnseenMockPassage(cefrBand, seenIds);
       }
-      const fallback = randomMockPassage(cefrBand);
-      if (!fallback) return false;
-      setPassages((prev) => [...prev, fallback]);
+      if (!next || seenIds.includes(next.id)) return false;
+
+      setPassages((prev) => {
+        if (prev.some((p) => p.id === next.id)) return prev;
+        return [...prev, next];
+      });
       return true;
     };
   }, [cefrBand, consumePrefetched]);

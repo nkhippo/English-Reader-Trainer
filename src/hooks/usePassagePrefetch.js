@@ -6,14 +6,39 @@ import { USER_ID } from '../lib/config.js';
 /**
  * Prefetch the next passage in the background while the user reads the current one.
  */
-export function usePassagePrefetch({ cefrBand, currentPassageId, enabled }) {
+export function usePassagePrefetch({ cefrBand, seenPassageIds, enabled }) {
   const prefetchedRef = useRef(null);
   const inflightRef = useRef(null);
   const bandRef = useRef(cefrBand);
+  const seenRef = useRef([]);
 
   const clearPrefetch = useCallback(() => {
     prefetchedRef.current = null;
     inflightRef.current = null;
+  }, []);
+
+  const isSeen = useCallback((passage) => {
+    if (!passage?.id) return true;
+    return seenRef.current.includes(passage.id);
+  }, []);
+
+  const fetchNextPassage = useCallback(async (extraExclude = []) => {
+    const exclude = new Set([...seenRef.current, ...extraExclude]);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const res = await fetchGeneratePassage({
+        userId: USER_ID,
+        cefr: bandRef.current,
+        excludePassageIds: [...exclude],
+      });
+      const normalized = normalizePassagesFromApi(res.passages || []);
+      const next = normalized[0] ?? null;
+      if (!next) return null;
+      if (!exclude.has(next.id)) return next;
+      exclude.add(next.id);
+    }
+
+    return null;
   }, []);
 
   const prefetchNext = useCallback(async () => {
@@ -22,10 +47,9 @@ export function usePassagePrefetch({ cefrBand, currentPassageId, enabled }) {
     const band = bandRef.current;
     inflightRef.current = (async () => {
       try {
-        const res = await fetchGeneratePassage({ userId: USER_ID, cefr: band });
-        const normalized = normalizePassagesFromApi(res.passages || []);
-        if (normalized[0] && bandRef.current === band) {
-          prefetchedRef.current = normalized[0];
+        const next = await fetchNextPassage();
+        if (next && !isSeen(next) && bandRef.current === band) {
+          prefetchedRef.current = next;
         }
       } catch (err) {
         console.warn('[ERT] prefetch failed:', err);
@@ -35,7 +59,7 @@ export function usePassagePrefetch({ cefrBand, currentPassageId, enabled }) {
     })();
 
     await inflightRef.current;
-  }, [enabled]);
+  }, [enabled, fetchNextPassage, isSeen]);
 
   useEffect(() => {
     bandRef.current = cefrBand;
@@ -43,38 +67,51 @@ export function usePassagePrefetch({ cefrBand, currentPassageId, enabled }) {
   }, [cefrBand, clearPrefetch]);
 
   useEffect(() => {
-    if (!enabled || !currentPassageId) return;
+    seenRef.current = seenPassageIds || [];
+  }, [seenPassageIds]);
+
+  useEffect(() => {
+    if (!enabled || seenPassageIds.length === 0) return;
+    if (prefetchedRef.current && isSeen(prefetchedRef.current)) {
+      prefetchedRef.current = null;
+    }
     prefetchNext();
-  }, [currentPassageId, enabled, prefetchNext]);
+  }, [enabled, isSeen, prefetchNext, seenPassageIds]);
 
   const consumePrefetched = useCallback(async () => {
+    const takeNext = async (candidate) => {
+      if (!candidate || isSeen(candidate)) {
+        return fetchNextPassage([candidate?.id].filter(Boolean));
+      }
+      return candidate;
+    };
+
     if (prefetchedRef.current) {
-      const next = prefetchedRef.current;
+      const next = await takeNext(prefetchedRef.current);
       prefetchedRef.current = null;
       prefetchNext();
-      return next;
+      return next && !isSeen(next) ? next : takeNext(null);
     }
 
     if (inflightRef.current) {
       await inflightRef.current;
       if (prefetchedRef.current) {
-        const next = prefetchedRef.current;
+        const next = await takeNext(prefetchedRef.current);
         prefetchedRef.current = null;
         prefetchNext();
-        return next;
+        return next && !isSeen(next) ? next : takeNext(null);
       }
     }
 
     try {
-      const res = await fetchGeneratePassage({ userId: USER_ID, cefr: bandRef.current });
-      const normalized = normalizePassagesFromApi(res.passages || []);
+      const next = await takeNext(null);
       prefetchNext();
-      return normalized[0] ?? null;
+      return next && !isSeen(next) ? next : null;
     } catch (err) {
       console.error('[ERT] fetch next passage failed:', err);
       return null;
     }
-  }, [prefetchNext]);
+  }, [fetchNextPassage, isSeen, prefetchNext]);
 
   return { consumePrefetched, clearPrefetch };
 }
