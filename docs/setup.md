@@ -1,16 +1,22 @@
 # Setup Guide — English Reader Trainer
 
+## Deployed resources
+
+| Resource | URL / ID |
+|----------|----------|
+| GAS Web App | `https://script.google.com/macros/s/AKfycbzeCoDzWxDyGBhpDtKeZ5mUehChQsvTPewQ0Sb_x6U2KQaZdoSDePRr3pAnJPGe8lS4/exec` |
+| Spreadsheet | [English Reader Trainer](https://docs.google.com/spreadsheets/d/1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw/edit) — ID: `1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw` |
+| Drive root | [EnglishReaderTrainer](https://drive.google.com/drive/folders/1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI) — ID: `1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI` |
+
 ## Phase 1: Backend (Google Apps Script)
 
 ### 1. Google Sheets
 
-1. Create a new Google Spreadsheet (e.g. "English Reader Trainer").
-2. Copy the Spreadsheet ID from the URL.
+Spreadsheet ID: `1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw`
 
 ### 2. Google Drive
 
-1. Create a folder `/EnglishReaderTrainer/` in Drive.
-2. Copy the folder ID from the URL.
+Drive root folder ID: `1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI`
 
 ### 3. Apps Script
 
@@ -29,11 +35,9 @@
 
 ### 4. Frontend
 
-1. Open the app → click ⚙ (Settings).
-2. Paste the GAS Web App URL and Save.
-3. "Got it" / "Still hard" will now append rows to `encounter_log`.
+The GAS URL is baked into `src/lib/config.js` as `DEFAULT_GAS_URL`. "Got it" / "Still hard" append rows to `encounter_log` automatically.
 
-Alternatively, set `VITE_GAS_URL` in `.env.local` for local development.
+To override locally, set `VITE_GAS_URL` in `.env.local` or use ⚙ Settings in the app.
 
 ## Sheet Schema
 
