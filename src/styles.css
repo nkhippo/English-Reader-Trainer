@@ -532,6 +532,8 @@ html[lang='ja'] .note__meta {
 
 .footer {
   grid-row: 4;
+  position: relative;
+  z-index: 101;
   padding: 16px 32px;
   padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
   display: grid;
@@ -607,9 +609,16 @@ html[lang='ja'] .note__meta {
   color: var(--color-page) !important;
 }
 
+.btn--suspend-queued {
+  border-color: var(--color-ink);
+  color: var(--color-ink);
+  background: rgba(26, 34, 54, 0.06);
+}
+
 .processing-overlay {
   position: fixed;
   inset: 0;
+  bottom: var(--footer-offset);
   z-index: 100;
   display: flex;
   align-items: center;
@@ -641,6 +650,18 @@ html[lang='ja'] .note__meta {
   font-weight: 500;
   letter-spacing: 0.06em;
   color: var(--color-ink-soft);
+  text-align: center;
+}
+
+.processing-overlay__hint {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  color: var(--color-marginalia);
+  text-align: center;
+  max-width: 280px;
 }
 
 @keyframes processing-spin {
@@ -685,7 +706,7 @@ html[lang='ja'] .note__meta {
     bottom: 0;
     left: 0;
     right: 0;
-    z-index: 30;
+    z-index: 101;
     width: 100%;
     grid-row: unset;
   }

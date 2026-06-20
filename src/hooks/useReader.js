@@ -28,6 +28,8 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
   const passagesKeyRef = useRef('');
   const actionPendingRef = useRef(false);
   const actionLockTimerRef = useRef(null);
+  const pauseAfterActionRef = useRef(false);
+  const [pauseAfterAction, setPauseAfterAction] = useState(false);
   const passiveFiredRef = useRef(false);
   const remainingSecondsRef = useRef(READING_TIME_LIMIT_SEC);
 
@@ -229,6 +231,11 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
   );
 
   const pauseReading = useCallback(() => {
+    if (actionPendingRef.current) {
+      pauseAfterActionRef.current = true;
+      setPauseAfterAction(true);
+      return;
+    }
     if (!canInteract || !isTimerRunning) return;
     stopTimer();
     setIsPaused(true);
@@ -240,7 +247,13 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
       stopTimer();
       resetMarginalia();
       recordEncounter(signal);
-      await advanceToNext({ autoStart: true });
+      const autoStart = !pauseAfterActionRef.current;
+      try {
+        await advanceToNext({ autoStart });
+      } finally {
+        pauseAfterActionRef.current = false;
+        setPauseAfterAction(false);
+      }
     },
     [advanceToNext, recordEncounter, resetMarginalia, stopTimer],
   );
@@ -356,6 +369,7 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
     translationVisible,
     hardFlash,
     actionsDisabled,
+    pauseAfterAction,
     awaitingStart,
     isPaused,
     isReadingStarted,

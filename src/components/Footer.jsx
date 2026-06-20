@@ -7,6 +7,7 @@ export function Footer({
   hardFlash,
   actionsDisabled,
   suspendDisabled,
+  suspendQueued,
 }) {
   const { t } = useI18n();
 
@@ -22,8 +23,13 @@ export function Footer({
         </button>
       </div>
       <div className="footer__center">
-        <button className="btn btn--ghost" onClick={onSuspend} disabled={suspendDisabled}>
-          {t.suspend}
+        <button
+          className={`btn btn--ghost ${suspendQueued ? 'btn--suspend-queued' : ''}`}
+          onClick={onSuspend}
+          disabled={suspendDisabled}
+          aria-pressed={suspendQueued || undefined}
+        >
+          {suspendQueued ? t.suspendQueued : t.suspend}
         </button>
       </div>
       <div className="footer__right">

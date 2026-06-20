@@ -200,16 +200,14 @@ export default function App() {
           reader.actionsDisabled || reader.awaitingStart || reader.isPaused || !reader.isReadingStarted
         }
         suspendDisabled={
-          reader.actionsDisabled ||
-          reader.awaitingStart ||
-          reader.isPaused ||
-          !reader.isReadingStarted
+          reader.awaitingStart || reader.isPaused || !reader.isReadingStarted
         }
+        suspendQueued={reader.pauseAfterAction}
       />
 
       <TranslationOverlay text={reader.passage?.ja ?? ''} visible={reader.translationVisible} />
 
-      <ProcessingOverlay visible={reader.actionsDisabled} />
+      <ProcessingOverlay visible={reader.actionsDisabled} pauseQueued={reader.pauseAfterAction} />
     </div>
   );
 }
