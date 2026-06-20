@@ -701,23 +701,31 @@ function chunksCacheKey_(chunks) {
   return chunks.map((c) => c.chunk_id).sort().join(',');
 }
 
-function findCachedPassage_(chunkKey, index, band, progressMap) {
+function findCachedPassage_(chunkKey, index, band, progressMap, excludePassageIds) {
   const sheet = getSheet_(SHEET_NAMES.PASSAGES);
   if (sheet.getLastRow() < 2) return null;
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
   const col = indexColumns_(headers);
+  const exclude = {};
+  (excludePassageIds || []).forEach((id) => { if (id) exclude[id] = true; });
+  const candidates = [];
+
   for (let r = data.length - 1; r >= 1; r--) {
     const ids = String(data[r][col.target_chunk_ids] || '').split(',').sort().join(',');
     if (ids !== chunkKey) continue;
+    const passageId = String(data[r][col.passage_id] || '');
+    if (exclude[passageId]) continue;
     const fileId = data[r][col.drive_file_id];
     if (!fileId) continue;
     try {
       const json = JSON.parse(DriveApp.getFileById(fileId).getBlob().getDataAsString('UTF-8'));
-      return hydratePassageFromJson_(json, index, band, progressMap);
+      candidates.push(hydratePassageFromJson_(json, index, band, progressMap));
     } catch (e) { /* skip bad cache */ }
   }
-  return null;
+
+  if (candidates.length === 0) return null;
+  return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
 function generateDynamicPassage_(userId, band, index, progressMap, excludePassageIds) {
@@ -729,8 +737,8 @@ function generateDynamicPassage_(userId, band, index, progressMap, excludePassag
   if (chunks.length < 2) throw new Error('Not enough chunks to generate passage');
 
   const cacheKey = chunksCacheKey_(chunks);
-  const cached = findCachedPassage_(cacheKey, index, band, progressMap);
-  if (cached && excludePassageIds.indexOf(cached.passage_id) < 0) return cached;
+  const cached = findCachedPassage_(cacheKey, index, band, progressMap, excludePassageIds);
+  if (cached) return cached;
 
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
