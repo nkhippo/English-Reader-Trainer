@@ -47,3 +47,7 @@ export async function logEncounter({
     time_on_page_ms: timeOnPageMs,
   });
 }
+
+export async function fetchStats({ userId, cefr }) {
+  return postAction('stats', { user_id: userId, cefr });
+}

@@ -1,3 +1,5 @@
+import { useI18n } from '../i18n/I18nProvider.jsx';
+
 function StageDots({ stage }) {
   return (
     <span className="stage-dots">
@@ -9,14 +11,16 @@ function StageDots({ stage }) {
 }
 
 export function MarginaliaPanel({ chunk, isOpen, onClose, isFading }) {
+  const { t } = useI18n();
+
   return (
     <aside className={`marginalia ${isOpen ? 'is-open' : ''}`}>
-      <button className="marginalia__close" onClick={onClose} aria-label="Close">
+      <button className="marginalia__close" onClick={onClose} aria-label={t.close}>
         ×
       </button>
       <div className={`marginalia__content ${isFading ? 'is-fading' : ''}`}>
         {!chunk ? (
-          <div className="marginalia__empty">Tap any highlighted phrase to read its note.</div>
+          <div className="marginalia__empty">{t.marginaliaEmpty}</div>
         ) : (
           <div className="note">
             <span className="note__chunk">{chunk.text}</span>
@@ -28,16 +32,16 @@ export function MarginaliaPanel({ chunk, isOpen, onClose, isFading }) {
                 <span className="note__meta-value">{chunk.cefr}</span>
               </div>
               <div className="note__meta-item">
-                <span className="note__meta-label">Encounters</span>
+                <span className="note__meta-label">{t.encounters}</span>
                 <span className="note__meta-value">{chunk.encounters}</span>
               </div>
               <div className="note__meta-item">
-                <span className="note__meta-label">Stage</span>
+                <span className="note__meta-label">{t.stage}</span>
                 <StageDots stage={chunk.stage} />
               </div>
             </div>
             <div className="note__example">
-              <span className="note__example-label">Example</span>
+              <span className="note__example-label">{t.example}</span>
               {chunk.example}
             </div>
           </div>

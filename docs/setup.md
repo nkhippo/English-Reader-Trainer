@@ -67,8 +67,47 @@ See the work-request document (§3.1) for full column definitions.
   /passages/     ← generated passage JSON (Phase 4)
   /audio/        ← TTS mp3 cache (Phase 5)
   /manifest/     ← audio_manifest.json (shared with Listening Trainer)
-  /shared/       ← cefr_words.json, cefr_chunks.json (Phase 2)
+  /shared/       ← cefr_words.json, cefr_chunks.json ✅ uploaded
 ```
+
+## Phase 2: CEFR import & translations
+
+### 1. Upload CEFR JSON (done)
+
+Place in Drive `/EnglishReaderTrainer/shared/`:
+
+- `cefr_words.json`
+- `cefr_chunks.json`
+
+### 2. Update GAS code & redeploy
+
+1. Copy latest `gas/Code.gs` into your Apps Script project.
+2. Add Script Property: `ANTHROPIC_API_KEY` (Claude API key).
+3. **Deploy** → Manage deployments → Edit → **New version** → Deploy.
+
+### 3. Run import (Apps Script editor)
+
+```
+importChunksFromCefr()
+```
+
+Imports ~7,100 entries (words + chunks) into `chunks_master`.
+
+### 4. Run Japanese translation batch
+
+```
+enrichAllTranslations(10)
+```
+
+Run repeatedly until log shows `remaining: 0`.
+
+Or single batch: `enrichTranslationsBatch()`
+
+### 5. Verify
+
+- GET the Web App URL → `{ "phase": 2, "chunks_master_count": 7100+ }`
+- App header: tap level pill → switch A1+A2 / B1 / B2
+- Marginalia shows `ja_translation` from sheet after enrich
 
 ## Local Development
 

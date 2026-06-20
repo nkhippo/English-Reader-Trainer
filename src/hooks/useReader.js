@@ -13,8 +13,21 @@ export function useReader(passages) {
 
   const pageStartRef = useRef(Date.now());
   const translationTimerRef = useRef(null);
+  const passagesKeyRef = useRef('');
 
   const passage = passages[currentIndex] ?? null;
+
+  // Reset when passage set changes (CEFR band switch)
+  useEffect(() => {
+    const key = passages.map((p) => p.id).join('|');
+    if (passagesKeyRef.current && passagesKeyRef.current !== key) {
+      setCurrentIndex(0);
+      setActiveChunkId(null);
+      setMarginaliaOpen(false);
+      pageStartRef.current = Date.now();
+    }
+    passagesKeyRef.current = key;
+  }, [passages]);
 
   const resetMarginalia = useCallback(() => {
     setActiveChunkId(null);

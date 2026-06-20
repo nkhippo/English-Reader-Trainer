@@ -31,8 +31,8 @@ docs/          Setup guide
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| 1 | ✅ | React UI + mock passages + GAS log_encounter (Sheets/Drive/GAS deployed) |
-| 2 | — | CEFR data import |
+| 1 | ✅ | React UI + GAS + encounter logging |
+| 2 | ✅ | CEFR import, ja_translation batch, level switcher UI |
 | 3 | — | SRS engine |
 | 4 | — | Claude passage generation |
 | 5 | — | TTS audio |
