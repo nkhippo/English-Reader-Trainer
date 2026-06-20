@@ -97,41 +97,38 @@ button {
 }
 
 .cefr-picker {
-  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  max-width: 240px;
 }
 
-.cefr-picker__menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  list-style: none;
-  background: var(--color-page);
-  border: 1px solid var(--color-rule);
-  box-shadow: 0 8px 24px rgba(26, 34, 54, 0.1);
-  z-index: 50;
-  min-width: 120px;
-}
-
-.cefr-picker__item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 10px 14px;
-  border: none;
-  background: transparent;
+.cefr-picker__btn {
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: 6px 8px;
+  border: 1px solid var(--color-rule);
+  background: transparent;
+  color: var(--color-ink-soft);
   cursor: pointer;
-  letter-spacing: 0.06em;
+  text-align: center;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
 }
 
-.cefr-picker__item:hover {
-  background: var(--color-marginalia-bg);
-}
-
-.cefr-picker__item--active {
+.cefr-picker__btn--active {
+  background: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-page);
   font-weight: 600;
-  background: var(--color-marginalia-bg);
+}
+
+.cefr-picker__btn:not(.cefr-picker__btn--active):hover {
+  border-color: var(--color-ink-soft);
+  color: var(--color-ink);
 }
 
 .app--loading {
@@ -761,6 +758,24 @@ html[lang='ja'] .note__meta {
   .header {
     padding: max(11px, env(safe-area-inset-top, 0px)) 18px 11px;
     font-size: 10px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .cefr-picker {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .cefr-picker__btn {
+    padding: 10px 8px;
+    font-size: 11px;
+  }
+
+  .header__right {
+    flex: 1 1 100%;
+    justify-content: space-between;
+    gap: 10px;
   }
 
   .reading-timer {
@@ -771,10 +786,6 @@ html[lang='ja'] .note__meta {
   .reading-timer__label {
     font-size: 10px;
     min-width: 64px;
-  }
-
-  .header__right {
-    gap: 10px;
   }
 
   .stats {
