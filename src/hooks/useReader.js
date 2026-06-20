@@ -97,7 +97,9 @@ export function useReader(passages, { onProgressUpdate } = {}) {
           timeOnPageMs,
         });
         if (onProgressUpdate && (signal === 'got_it' || signal === 'still_hard')) {
-          await onProgressUpdate();
+          onProgressUpdate().catch((err) => {
+            console.error('[ERT] progress refresh failed:', err);
+          });
         }
       } catch (err) {
         console.error('[ERT] log_encounter failed:', err);

@@ -16,7 +16,7 @@ After setup, press **Got it** or **Still hard** and confirm rows appear in the `
 
 | Resource | URL / ID |
 |----------|----------|
-| GAS Web App | `https://script.google.com/macros/s/AKfycbw1WpZY6_buHhyKt92srEwBkX6qa5CrWPxTOuKh_QFSWyuOa_twSfdcfiKH2aQ6K1JM/exec` |
+| GAS Web App | `https://script.google.com/macros/s/AKfycbxJsMLc-OElmcCMT1mV4_vMW_Ts3NfzSd_Z9zUfNt0XE3Wlt10XtCLYJ4P1im9KL1Ub/exec` |
 | Spreadsheet | [English Reader Trainer](https://docs.google.com/spreadsheets/d/1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw/edit) — ID: `1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw` |
 | Drive root | [EnglishReaderTrainer](https://drive.google.com/drive/folders/1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI) — ID: `1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI` |
 
@@ -116,6 +116,8 @@ After redeploying GAS with Phase 3 code:
 - **Got it** / **Still hard** updates `user_progress` (stage, `next_due_at`, status)
 - Header stats show real **reviewing** / **graduated** counts from `user_progress`
 - Marginalia shows live **encounters** and **stage** dots
+
+If `encounter_log` has rows but `user_progress` is empty, run **`rebuildUserProgressFromEncounters()`** once in the Apps Script editor.
 
 SRS rules (§4.2): got_it → stage+1, still_hard → stage−1, passive → +1 day, graduated at 5 encounters × 3 passages.
 

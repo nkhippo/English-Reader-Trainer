@@ -48,31 +48,42 @@ const ENRICH_BATCH_SIZE = 25;
 function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents);
-    const action = body.action;
-
-    if (action === 'due_chunks') return jsonResponse(handleDueChunks_(body));
-    if (action === 'generate_passage') return jsonResponse(handleGeneratePassage_(body));
-    if (action === 'log_encounter') return jsonResponse(handleLogEncounter_(body));
-    if (action === 'update_progress') return jsonResponse(handleUpdateProgress_(body));
-    if (action === 'stats') return jsonResponse(handleStats_(body));
-
-    return jsonResponse({ error: `Unknown action: ${action}` });
+    return jsonResponse(dispatchAction_(body));
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) });
   }
 }
 
-function doGet() {
+function doGet(e) {
+  if (e.parameter.data) {
+    try {
+      const body = JSON.parse(e.parameter.data);
+      return jsonResponse(dispatchAction_(body));
+    } catch (err) {
+      return jsonResponse({ error: String(err && err.message || err) });
+    }
+  }
+
   let chunksCount = 0;
   try {
     chunksCount = Math.max(0, getSheet_(SHEET_NAMES.CHUNKS).getLastRow() - 1);
-  } catch (e) { /* sheet not ready */ }
+  } catch (err) { /* sheet not ready */ }
   return jsonResponse({
     status: 'ok',
     service: 'english-reader-trainer',
     phase: 3,
     chunks_master_count: chunksCount,
   });
+}
+
+function dispatchAction_(body) {
+  const action = body.action;
+  if (action === 'due_chunks') return handleDueChunks_(body);
+  if (action === 'generate_passage') return handleGeneratePassage_(body);
+  if (action === 'log_encounter') return handleLogEncounter_(body);
+  if (action === 'update_progress') return handleUpdateProgress_(body);
+  if (action === 'stats') return handleStats_(body);
+  return { error: `Unknown action: ${action}` };
 }
 
 // ===== Setup =====
@@ -121,7 +132,6 @@ function importChunksFromCefr() {
   }
 
   writeRowsInBatches_(sheet, rows);
-  CacheService.getScriptCache().remove('chunks_index_v1');
   Logger.log(`Imported ${rows.length} entries (${wordEntries.length} words, ${chunkEntries.length} chunks).`);
   return { imported: rows.length, words: wordEntries.length, chunks: chunkEntries.length };
 }
@@ -410,12 +420,37 @@ function updateProgressForChunk_(userId, chunkId, passageId, signal) {
   if (existing) {
     sheet.getRange(existing.row, 1, 1, row.length).setValues([row]);
   } else {
-    const startRow = sheet.getLastRow() + 1;
-    sheet.getRange(startRow, 1, 1, row.length).setValues([row]);
+    sheet.appendRow(row);
   }
 }
 
-// ===== API handlers =====
+/** Rebuild user_progress rows from encounter_log (run once if progress sheet is empty). */
+function rebuildUserProgressFromEncounters() {
+  const sheet = getSheet_(SHEET_NAMES.ENCOUNTERS);
+  if (sheet.getLastRow() < 2) {
+    Logger.log('No encounters to rebuild from.');
+    return { rebuilt: 0 };
+  }
+
+  const data = sheet.getDataRange().getValues();
+  const seen = {};
+  let rebuilt = 0;
+
+  for (let r = 1; r < data.length; r++) {
+    const userId = data[r][1];
+    const chunkId = data[r][2];
+    const passageId = data[r][3] || '';
+    const signal = data[r][5] || 'passive';
+    const key = `${userId}|${chunkId}|${passageId}|${signal}|${r}`;
+    if (seen[key]) continue;
+    seen[key] = true;
+    updateProgressForChunk_(userId, chunkId, passageId, signal);
+    rebuilt++;
+  }
+
+  Logger.log(`Rebuilt ${rebuilt} progress updates from encounter_log.`);
+  return { rebuilt };
+}
 
 function handleDueChunks_(body) {
   const userId = body.user_id || 'naoya';
@@ -671,10 +706,6 @@ function cefrMatchesBand_(cefr, band) {
 }
 
 function loadChunksIndex_() {
-  const cache = CacheService.getScriptCache();
-  const cached = cache.get('chunks_index_v1');
-  if (cached) return JSON.parse(cached);
-
   const sheet = getSheet_(SHEET_NAMES.CHUNKS);
   if (sheet.getLastRow() < 2) return {};
 
@@ -689,15 +720,12 @@ function loadChunksIndex_() {
     index[text.toLowerCase().trim()] = {
       chunk_id: data[r][col.chunk_id],
       text,
-      type: data[r][col.type],
       cefr: data[r][col.cefr],
-      pos: data[r][col.pos],
       ja_translation: data[r][col.ja_translation],
       example_sentence: data[r][col.example_sentence],
     };
   }
 
-  cache.put('chunks_index_v1', JSON.stringify(index), 300);
   return index;
 }
 
