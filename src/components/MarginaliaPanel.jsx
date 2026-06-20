@@ -2,10 +2,35 @@ import { useI18n } from '../i18n/I18nProvider.jsx';
 
 function StageDots({ stage }) {
   return (
-    <span className="stage-dots">
+    <span className="stage-dots" aria-hidden="true">
       {Array.from({ length: 5 }, (_, i) => (
         <span key={i} className={`dot ${i < stage ? 'dot--filled' : ''}`} />
       ))}
+    </span>
+  );
+}
+
+function StageDisplay({ stage, status }) {
+  const { t } = useI18n();
+  const normalizedStage = Math.max(0, Math.min(Number(stage) || 0, 5));
+
+  if (status === 'graduated' || normalizedStage >= 5) {
+    return (
+      <span className="note__stage">
+        <span className="note__stage-count">{t.stageProgress(5)}</span>
+        <StageDots stage={5} />
+      </span>
+    );
+  }
+
+  if (normalizedStage <= 0) {
+    return <span className="note__stage note__stage--new">{t.stageNew}</span>;
+  }
+
+  return (
+    <span className="note__stage">
+      <span className="note__stage-count">{t.stageProgress(normalizedStage)}</span>
+      <StageDots stage={normalizedStage} />
     </span>
   );
 }
@@ -37,10 +62,7 @@ export function MarginaliaPanel({ chunk, isOpen, onClose, isFading }) {
               </div>
               <div className="note__meta-item">
                 <span className="note__meta-label">{t.stage}</span>
-                <span className="note__meta-value note__stage">
-                  <span className="note__stage-count">{t.stageProgress(chunk.stage)}</span>
-                  <StageDots stage={chunk.stage} />
-                </span>
+                <StageDisplay stage={chunk.stage} status={chunk.status} />
               </div>
             </div>
             <div className="note__example">

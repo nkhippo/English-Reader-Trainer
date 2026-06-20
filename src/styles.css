@@ -447,11 +447,21 @@ html[lang='ja'] .note__meta {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+.note__stage--new {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--color-marginalia);
+  font-weight: 500;
 }
 
 .note__stage-count {
   font-variant-numeric: tabular-nums;
-  min-width: 2ch;
+  min-width: 3ch;
 }
 
 .stage-dots {
