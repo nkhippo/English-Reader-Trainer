@@ -325,7 +325,7 @@ button {
 }
 
 .chunk--cloze {
-  background: transparent;
+  background: rgba(255, 224, 102, 0.45);
   border-bottom: 2px dashed var(--color-highlight-line);
   color: var(--color-ink-muted, #6b6560);
   font-style: italic;
@@ -333,7 +333,12 @@ button {
 }
 
 .chunk--cloze:hover {
-  background: rgba(255, 224, 102, 0.35);
+  background: rgba(255, 224, 102, 0.72);
+}
+
+.marginalia__empty--cloze {
+  color: var(--color-ink);
+  font-style: italic;
 }
 
 html[lang='ja'] .page-indicator {

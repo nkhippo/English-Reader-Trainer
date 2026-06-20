@@ -35,8 +35,9 @@ function StageDisplay({ stage, status }) {
   );
 }
 
-export function MarginaliaPanel({ chunk, isOpen, onClose, isFading }) {
+export function MarginaliaPanel({ chunk, isOpen, onClose, isFading, clozePending }) {
   const { t } = useI18n();
+  const emptyMessage = clozePending ? t.clozeReveal : t.marginaliaEmpty;
 
   return (
     <aside className={`marginalia ${isOpen ? 'is-open' : ''}`}>
@@ -45,7 +46,9 @@ export function MarginaliaPanel({ chunk, isOpen, onClose, isFading }) {
       </button>
       <div className={`marginalia__content ${isFading ? 'is-fading' : ''}`}>
         {!chunk ? (
-          <div className="marginalia__empty">{t.marginaliaEmpty}</div>
+          <div className={`marginalia__empty ${clozePending ? 'marginalia__empty--cloze' : ''}`}>
+            {emptyMessage}
+          </div>
         ) : (
           <div className="note">
             <span className="note__chunk">{chunk.text}</span>

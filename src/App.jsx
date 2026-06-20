@@ -159,6 +159,7 @@ export default function App() {
           isOpen={reader.marginaliaOpen}
           onClose={reader.closeMarginalia}
           isFading={false}
+          clozePending={!!reader.clozeChunkId && !reader.clozeRevealed}
         />
       </main>
 
