@@ -9,6 +9,7 @@ import { Footer } from './components/Footer.jsx';
 import { TranslationOverlay } from './components/TranslationOverlay.jsx';
 import { ProcessingOverlay } from './components/ProcessingOverlay.jsx';
 import { ReadingTimerBar } from './components/ReadingTimerBar.jsx';
+import { StartReadingOverlay } from './components/StartReadingOverlay.jsx';
 import { fetchSession, fetchStats } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
@@ -139,9 +140,15 @@ export default function App() {
         graduated={stats.graduated}
       />
 
-      <ReadingTimerBar visible={!!reader.passage} remainingSeconds={reader.remainingSeconds} />
+      <ReadingTimerBar visible={reader.isReadingStarted} remainingSeconds={reader.remainingSeconds} />
 
       <main className="reader">
+        <StartReadingOverlay
+          visible={reader.awaitingStart && !!reader.passage}
+          paused={reader.isPaused}
+          onStart={() => reader.startReading()}
+          onResume={() => reader.startReading({ resume: true })}
+        />
         <PassageView
           passage={reader.passage}
           activeChunkId={reader.activeChunkId}
@@ -166,8 +173,17 @@ export default function App() {
       <Footer
         onStillHard={reader.handleStillHard}
         onGotIt={reader.handleGotIt}
+        onSuspend={reader.pauseReading}
         hardFlash={reader.hardFlash}
-        disabled={reader.actionsDisabled}
+        actionsDisabled={
+          reader.actionsDisabled || reader.awaitingStart || reader.isPaused || !reader.isReadingStarted
+        }
+        suspendDisabled={
+          reader.actionsDisabled ||
+          reader.awaitingStart ||
+          reader.isPaused ||
+          !reader.isReadingStarted
+        }
       />
 
       <TranslationOverlay text={reader.passage?.ja ?? ''} visible={reader.translationVisible} />

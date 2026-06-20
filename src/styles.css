@@ -524,10 +524,10 @@ html[lang='ja'] .note__meta {
 .footer {
   grid-row: 4;
   padding: 16px 32px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   gap: 12px;
+  align-items: center;
   border-top: 1px solid var(--color-rule);
   background: var(--color-page);
 }
