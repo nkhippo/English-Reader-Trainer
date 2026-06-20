@@ -10,8 +10,7 @@
 | Script Properties set | ✅ Done |
 | Frontend GAS URL configured | ✅ Done |
 
-After setup, open ⚙ Settings in the app — **Backend: connected (phase 1)** should appear.
-Press **Got it** or **Still hard** and confirm rows appear in the `encounter_log` tab.
+After setup, press **Got it** or **Still hard** and confirm rows appear in the `encounter_log` tab.
 
 ## Deployed resources
 
@@ -48,9 +47,7 @@ Drive root folder ID: `1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI`
 
 ### 4. Frontend
 
-The GAS URL is baked into `src/lib/config.js` as `DEFAULT_GAS_URL`. "Got it" / "Still hard" append rows to `encounter_log` automatically.
-
-To override locally, set `VITE_GAS_URL` in `.env.local` or use ⚙ Settings in the app.
+The GAS URL is set in `src/lib/config.js` as `DEFAULT_GAS_URL`. Encounter logging works automatically.
 
 ## Sheet Schema
 
