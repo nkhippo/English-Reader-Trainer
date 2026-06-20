@@ -14,6 +14,7 @@ export function useReader(passages, { onProgressUpdate } = {}) {
   const [hardFlash, setHardFlash] = useState(false);
   const [actionsDisabled, setActionsDisabled] = useState(false);
   const [isReadingStarted, setIsReadingStarted] = useState(false);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [remainingSeconds, setRemainingSeconds] = useState(READING_TIME_LIMIT_SEC);
 
   const pageStartRef = useRef(Date.now());
@@ -26,8 +27,13 @@ export function useReader(passages, { onProgressUpdate } = {}) {
 
   const resetReadingTimer = useCallback(() => {
     setIsReadingStarted(false);
+    setIsTimerRunning(false);
     setRemainingSeconds(READING_TIME_LIMIT_SEC);
     passiveFiredRef.current = false;
+  }, []);
+
+  const stopTimer = useCallback(() => {
+    setIsTimerRunning(false);
   }, []);
 
   // Reset when passage set changes (CEFR band switch)
@@ -125,23 +131,26 @@ export function useReader(passages, { onProgressUpdate } = {}) {
     passiveFiredRef.current = false;
     setRemainingSeconds(READING_TIME_LIMIT_SEC);
     setIsReadingStarted(true);
+    setIsTimerRunning(true);
   }, []);
 
   const handleGotIt = useCallback(async () => {
     if (!isReadingStarted || !beginAction()) return;
+    stopTimer();
     await recordEncounter('got_it');
     if (!nextPassage()) releaseActionLock();
-  }, [beginAction, isReadingStarted, nextPassage, recordEncounter, releaseActionLock]);
+  }, [beginAction, isReadingStarted, nextPassage, recordEncounter, releaseActionLock, stopTimer]);
 
   const handleStillHard = useCallback(async () => {
     if (!isReadingStarted || !beginAction()) return;
+    stopTimer();
     await recordEncounter('still_hard');
     setHardFlash(true);
     setTimeout(() => {
       setHardFlash(false);
       if (!nextPassage()) releaseActionLock();
     }, 240);
-  }, [beginAction, isReadingStarted, nextPassage, recordEncounter, releaseActionLock]);
+  }, [beginAction, isReadingStarted, nextPassage, recordEncounter, releaseActionLock, stopTimer]);
 
   const selectChunk = useCallback(
     (chunkId) => {
@@ -163,7 +172,7 @@ export function useReader(passages, { onProgressUpdate } = {}) {
 
   // Countdown + passive encounter after time limit
   useEffect(() => {
-    if (!isReadingStarted || !passage) return undefined;
+    if (!isTimerRunning || !passage) return undefined;
 
     const tick = () => {
       const elapsed = Date.now() - pageStartRef.current;
@@ -179,7 +188,7 @@ export function useReader(passages, { onProgressUpdate } = {}) {
     tick();
     const interval = setInterval(tick, 250);
     return () => clearInterval(interval);
-  }, [currentIndex, isReadingStarted, passage, recordEncounter]);
+  }, [currentIndex, isTimerRunning, passage, recordEncounter]);
 
   // Keyboard navigation
   useEffect(() => {
