@@ -51,3 +51,12 @@ export async function logEncounter({
 export async function fetchStats({ userId, cefr }) {
   return postAction('stats', { user_id: userId, cefr });
 }
+
+export async function updateProgress({ userId, chunkIds, passageId, signal }) {
+  return postAction('update_progress', {
+    user_id: userId,
+    chunk_ids: chunkIds,
+    passage_id: passageId,
+    signal,
+  });
+}

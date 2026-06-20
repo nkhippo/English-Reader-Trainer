@@ -29,6 +29,18 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ reviewing: 0, graduated: 0 });
 
+  const refreshStats = useCallback(async (band) => {
+    try {
+      const statsRes = await fetchStats({ userId: USER_ID, cefr: band });
+      setStats({
+        reviewing: statsRes.reviewing ?? 0,
+        graduated: statsRes.graduated ?? 0,
+      });
+    } catch (err) {
+      console.error('[ERT] stats refresh failed:', err);
+    }
+  }, []);
+
   const loadContent = useCallback(async (band) => {
     setLoading(true);
     try {
@@ -39,7 +51,7 @@ export default function App() {
       const normalized = normalizePassagesFromApi(passageRes.passages || []);
       setPassages(normalized.length > 0 ? normalized : filterMockByBand(band));
       setStats({
-        reviewing: statsRes.reviewing ?? statsRes.chunks_in_band ?? 0,
+        reviewing: statsRes.reviewing ?? 0,
         graduated: statsRes.graduated ?? 0,
       });
     } catch (err) {
@@ -50,6 +62,17 @@ export default function App() {
     }
   }, []);
 
+  const handleProgressUpdate = useCallback(async () => {
+    try {
+      const passageRes = await fetchGeneratePassage({ userId: USER_ID, cefr: cefrBand });
+      const normalized = normalizePassagesFromApi(passageRes.passages || []);
+      if (normalized.length > 0) setPassages(normalized);
+      await refreshStats(cefrBand);
+    } catch (err) {
+      console.error('[ERT] progress refresh failed:', err);
+    }
+  }, [cefrBand, refreshStats]);
+
   useEffect(() => {
     loadContent(cefrBand);
   }, [cefrBand, loadContent]);
@@ -59,7 +82,7 @@ export default function App() {
     setCefrBand(band);
   };
 
-  const reader = useReader(passages);
+  const reader = useReader(passages, { onProgressUpdate: handleProgressUpdate });
 
   if (loading && passages.length === 0) {
     return (

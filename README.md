@@ -33,7 +33,7 @@ docs/          Setup guide
 |-------|--------|-------------|
 | 1 | ✅ | React UI + GAS + encounter logging |
 | 2 | ✅ | CEFR import, ja_translation batch, level switcher UI |
-| 3 | — | SRS engine |
+| 3 | ✅ | SRS engine (due_chunks, update_progress, graduation) |
 | 4 | — | Claude passage generation |
 | 5 | — | TTS audio |
 | 6 | — | Progress dashboard |

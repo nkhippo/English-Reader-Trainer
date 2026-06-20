@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { logEncounter } from '../lib/api.js';
 import { USER_ID } from '../lib/config.js';
 
-export function useReader(passages) {
+export function useReader(passages, { onProgressUpdate } = {}) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [activeChunkId, setActiveChunkId] = useState(null);
   const [marginaliaOpen, setMarginaliaOpen] = useState(false);
@@ -79,11 +79,14 @@ export function useReader(passages) {
           signal,
           timeOnPageMs,
         });
+        if (onProgressUpdate && (signal === 'got_it' || signal === 'still_hard')) {
+          await onProgressUpdate();
+        }
       } catch (err) {
         console.error('[ERT] log_encounter failed:', err);
       }
     },
-    [passage],
+    [passage, onProgressUpdate],
   );
 
   const handleGotIt = useCallback(async () => {

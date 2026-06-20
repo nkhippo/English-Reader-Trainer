@@ -109,6 +109,16 @@ Or single batch: `enrichTranslationsBatch()`
 - App header: tap level pill → switch A1+A2 / B1 / B2
 - Marginalia shows `ja_translation` from sheet after enrich
 
+## Phase 3: SRS engine
+
+After redeploying GAS with Phase 3 code:
+
+- **Got it** / **Still hard** updates `user_progress` (stage, `next_due_at`, status)
+- Header stats show real **reviewing** / **graduated** counts from `user_progress`
+- Marginalia shows live **encounters** and **stage** dots
+
+SRS rules (§4.2): got_it → stage+1, still_hard → stage−1, passive → +1 day, graduated at 5 encounters × 3 passages.
+
 ## Local Development
 
 ```bash

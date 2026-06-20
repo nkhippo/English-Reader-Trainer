@@ -12,6 +12,7 @@ export function normalizePassagesFromApi(apiPassages = []) {
       cefr: c.cefr,
       encounters: c.encounters ?? 0,
       stage: c.srs_stage ?? c.stage ?? 0,
+      status: c.status || 'new',
       example: c.example_sentence || c.example || '',
     })),
   }));

@@ -1,5 +1,5 @@
 /**
- * English Reader Trainer — Backend (Phase 2)
+ * English Reader Trainer — Backend (Phase 3)
  *
  * Script Properties:
  *   SPREADSHEET_ID, DRIVE_ROOT_ID
@@ -70,7 +70,7 @@ function doGet() {
   return jsonResponse({
     status: 'ok',
     service: 'english-reader-trainer',
-    phase: 2,
+    phase: 3,
     chunks_master_count: chunksCount,
   });
 }
@@ -269,34 +269,206 @@ function countMissingTranslations_() {
   return count;
 }
 
+// ===== Phase 3: SRS Engine (§4.2–4.4) =====
+
+/** Days until next encounter by SRS stage (index = stage). */
+const SRS_INTERVAL_DAYS = [0, 1, 3, 7, 14, 30];
+
+function computeNextDueAt_(stage) {
+  const days = SRS_INTERVAL_DAYS[Math.min(Math.max(stage, 0), 5)];
+  const d = new Date();
+  if (days <= 0) return d.toISOString();
+  d.setDate(d.getDate() + days);
+  return d.toISOString();
+}
+
+function applySignalToStage_(stage, signal) {
+  if (signal === 'got_it') return Math.min(stage + 1, 5);
+  if (signal === 'still_hard') return Math.max(stage - 1, 0);
+  return stage;
+}
+
+function computeNextDueAfterSignal_(stage, signal, existingNextDue) {
+  if (signal === 'skipped' && existingNextDue) return existingNextDue;
+  if (signal === 'passive') {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString();
+  }
+  return computeNextDueAt_(stage);
+}
+
+function shouldGraduate_(prog) {
+  if (prog.encounter_count < 5) return false;
+  if (prog.distinct_passages_count < 3) return false;
+  if (prog.encounter_count === 0) return false;
+  return prog.still_hard_count / prog.encounter_count < 0.3;
+}
+
+function deriveStatus_(stage, graduated, encounterCount) {
+  if (graduated) return 'graduated';
+  if (!encounterCount) return 'new';
+  if (stage <= 2) return 'learning';
+  return 'reviewing';
+}
+
+function isDue_(nextDueAt, now) {
+  if (!nextDueAt) return true;
+  const due = new Date(nextDueAt);
+  return isNaN(due.getTime()) || due <= now;
+}
+
+/** CEFR levels included for SRS (band + all lower levels). */
+function cefrLevelsForBand_(band) {
+  if (band === 'A1A2') return ['A1', 'A2'];
+  if (band === 'B1') return ['A1', 'A2', 'B1'];
+  return ['A1', 'A2', 'B1', 'B2'];
+}
+
+function chunkInSrsScope_(cefr, band) {
+  return cefrLevelsForBand_(band).indexOf(cefr) >= 0;
+}
+
+function loadUserProgressMap_(userId) {
+  const sheet = getSheet_(SHEET_NAMES.PROGRESS);
+  if (sheet.getLastRow() < 2) return {};
+  const data = sheet.getDataRange().getValues();
+  const col = indexColumns_(data[0]);
+  const map = {};
+  for (let r = 1; r < data.length; r++) {
+    if (data[r][col.user_id] !== userId) continue;
+    const chunkId = data[r][col.chunk_id];
+    map[chunkId] = {
+      row: r + 1,
+      user_id: data[r][col.user_id],
+      chunk_id: chunkId,
+      encounter_count: Number(data[r][col.encounter_count]) || 0,
+      distinct_passages_count: Number(data[r][col.distinct_passages_count]) || 0,
+      last_encountered_at: data[r][col.last_encountered_at],
+      next_due_at: data[r][col.next_due_at],
+      srs_stage: Number(data[r][col.srs_stage]) || 0,
+      status: data[r][col.status] || 'new',
+      got_it_count: Number(data[r][col.got_it_count]) || 0,
+      still_hard_count: Number(data[r][col.still_hard_count]) || 0,
+    };
+  }
+  return map;
+}
+
+function countDistinctPassagesForChunk_(userId, chunkId) {
+  const sheet = getSheet_(SHEET_NAMES.ENCOUNTERS);
+  if (sheet.getLastRow() < 2) return 0;
+  const data = sheet.getDataRange().getValues();
+  const passages = {};
+  for (let r = 1; r < data.length; r++) {
+    if (data[r][1] === userId && data[r][2] === chunkId && data[r][3]) {
+      passages[data[r][3]] = true;
+    }
+  }
+  return Object.keys(passages).length;
+}
+
+function updateProgressForChunk_(userId, chunkId, passageId, signal) {
+  const sheet = getSheet_(SHEET_NAMES.PROGRESS);
+  const map = loadUserProgressMap_(userId);
+  const nowIso = new Date().toISOString();
+  const distinctPassages = countDistinctPassagesForChunk_(userId, chunkId);
+  const existing = map[chunkId];
+
+  const encounter_count = (existing ? existing.encounter_count : 0) + 1;
+  const got_it_count = (existing ? existing.got_it_count : 0) + (signal === 'got_it' ? 1 : 0);
+  const still_hard_count = (existing ? existing.still_hard_count : 0) + (signal === 'still_hard' ? 1 : 0);
+  const prevStage = existing ? existing.srs_stage : 0;
+  const srs_stage = applySignalToStage_(prevStage, signal);
+  const next_due_at = computeNextDueAfterSignal_(
+    srs_stage,
+    signal,
+    existing ? existing.next_due_at : null,
+  );
+
+  const progSnapshot = {
+    encounter_count,
+    distinct_passages_count: distinctPassages,
+    still_hard_count,
+  };
+  const graduated = shouldGraduate_(progSnapshot);
+  const status = deriveStatus_(srs_stage, graduated, encounter_count);
+
+  const row = [
+    userId,
+    chunkId,
+    encounter_count,
+    distinctPassages,
+    nowIso,
+    graduated ? computeNextDueAt_(5) : next_due_at,
+    graduated ? 5 : srs_stage,
+    status,
+    got_it_count,
+    still_hard_count,
+  ];
+
+  if (existing) {
+    sheet.getRange(existing.row, 1, 1, row.length).setValues([row]);
+  } else {
+    const startRow = sheet.getLastRow() + 1;
+    sheet.getRange(startRow, 1, 1, row.length).setValues([row]);
+  }
+}
+
 // ===== API handlers =====
 
 function handleDueChunks_(body) {
+  const userId = body.user_id || 'naoya';
   const band = normalizeCefrBand_(body.cefr || 'B1');
   const limit = body.limit || 20;
+  const now = new Date();
   const index = loadChunksIndex_();
-  const all = Object.values(index).filter((c) => cefrMatchesBand_(c.cefr, band));
-  const due = all.slice(0, Math.min(limit, 10)).map((c) => ({
-    chunk_id: c.chunk_id,
-    text: c.text,
-    cefr: c.cefr,
-    srs_stage: 1,
-    status: 'reviewing',
-  }));
-  const newChunks = all.slice(10, limit).map((c) => ({
-    chunk_id: c.chunk_id,
-    text: c.text,
-    cefr: c.cefr,
-    status: 'new',
-  }));
-  return { due_chunks: due, new_chunks: newChunks, cefr_band: band };
+  const progressMap = loadUserProgressMap_(userId);
+
+  const due = [];
+  const newChunks = [];
+
+  Object.values(index).forEach((chunk) => {
+    if (!chunkInSrsScope_(chunk.cefr, band)) return;
+    const prog = progressMap[chunk.chunk_id];
+    if (!prog) {
+      newChunks.push({
+        chunk_id: chunk.chunk_id,
+        text: chunk.text,
+        cefr: chunk.cefr,
+        status: 'new',
+      });
+      return;
+    }
+    if (isDue_(prog.next_due_at, now)) {
+      due.push({
+        chunk_id: chunk.chunk_id,
+        text: chunk.text,
+        cefr: chunk.cefr,
+        srs_stage: prog.srs_stage,
+        last_encountered_at: prog.last_encountered_at,
+        status: prog.status,
+        still_hard_count: prog.still_hard_count,
+      });
+    }
+  });
+
+  due.sort((a, b) => (b.still_hard_count || 0) - (a.still_hard_count || 0));
+
+  const dueOut = due.slice(0, limit);
+  const remaining = limit - dueOut.length;
+  const newOut = newChunks.slice(0, Math.max(remaining, 0));
+
+  return { due_chunks: dueOut, new_chunks: newOut, cefr_band: band };
 }
 
 function handleGeneratePassage_(body) {
+  const userId = body.user_id || 'naoya';
   const band = normalizeCefrBand_(body.cefr || 'B1');
   const index = loadChunksIndex_();
+  const progressMap = loadUserProgressMap_(userId);
   const templates = getPassageTemplatesForBand_(band);
-  const passages = templates.map((tpl) => enrichPassageTemplate_(tpl, index, band));
+  const passages = templates.map((tpl) => enrichPassageTemplate_(tpl, index, band, progressMap));
   return { passages, cefr_band: band };
 }
 
@@ -316,23 +488,56 @@ function handleLogEncounter_(body) {
   if (rows.length > 0) {
     const startRow = sheet.getLastRow() + 1;
     sheet.getRange(startRow, 1, rows.length, rows[0].length).setValues(rows);
+    if (signal === 'got_it' || signal === 'still_hard' || signal === 'passive' || signal === 'skipped') {
+      chunkIds.forEach((chunkId) => {
+        updateProgressForChunk_(userId, chunkId, passageId, signal);
+      });
+    }
   }
   return { ok: true, logged: rows.length };
 }
 
 function handleUpdateProgress_(body) {
-  return { ok: true, phase: 2, message: 'update_progress — Phase 3' };
+  const userId = body.user_id || 'naoya';
+  const passageId = body.passage_id || '';
+  const signal = body.signal || 'passive';
+  const chunkIds = body.chunk_ids || [];
+  chunkIds.forEach((chunkId) => {
+    updateProgressForChunk_(userId, chunkId, passageId, signal);
+  });
+  return { ok: true, updated: chunkIds.length };
 }
 
 function handleStats_(body) {
+  const userId = body.user_id || 'naoya';
   const band = normalizeCefrBand_(body.cefr || 'B1');
   const index = loadChunksIndex_();
-  const inBand = Object.values(index).filter((c) => cefrMatchesBand_(c.cefr, band));
+  const progressMap = loadUserProgressMap_(userId);
+  const levels = cefrLevelsForBand_(band);
+
+  let reviewing = 0;
+  let graduated = 0;
+  let learning = 0;
+  let newCount = 0;
+
+  Object.values(index).forEach((chunk) => {
+    if (levels.indexOf(chunk.cefr) < 0) return;
+    const prog = progressMap[chunk.chunk_id];
+    if (!prog) {
+      newCount++;
+      return;
+    }
+    if (prog.status === 'graduated') graduated++;
+    else if (prog.status === 'learning') learning++;
+    else reviewing++;
+  });
+
   return {
-    reviewing: inBand.length,
-    graduated: 0,
+    reviewing: reviewing + learning,
+    graduated,
+    learning,
+    new: newCount,
     cefr_band: band,
-    chunks_in_band: inBand.length,
   };
 }
 
@@ -413,18 +618,21 @@ function getPassageTemplatesForBand_(band) {
   return T[band] || T.B1;
 }
 
-function enrichPassageTemplate_(tpl, index, band) {
+function enrichPassageTemplate_(tpl, index, band, progressMap) {
+  progressMap = progressMap || {};
   const target_chunks = tpl.chunk_texts.map((text) => {
     const key = text.toLowerCase().trim();
     const row = index[key] || fallbackChunk_(text, band);
+    const prog = progressMap[row.chunk_id];
     return {
       chunk_id: row.chunk_id,
       text: row.text,
       cefr: row.cefr,
       ja_translation: row.ja_translation || '',
       example_sentence: row.example_sentence || '',
-      encounters: 0,
-      srs_stage: 0,
+      encounters: prog ? prog.encounter_count : 0,
+      srs_stage: prog ? prog.srs_stage : 0,
+      status: prog ? prog.status : 'new',
     };
   });
   return {
