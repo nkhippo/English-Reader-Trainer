@@ -78,6 +78,7 @@ function doGet(e) {
 
 function dispatchAction_(body) {
   const action = body.action;
+  if (action === 'session') return handleSession_(body);
   if (action === 'due_chunks') return handleDueChunks_(body);
   if (action === 'generate_passage') return handleGeneratePassage_(body);
   if (action === 'log_encounter') return handleLogEncounter_(body);
@@ -507,6 +508,45 @@ function handleGeneratePassage_(body) {
   return { passages, cefr_band: band };
 }
 
+/** Single round-trip for initial app load (passages + header stats). */
+function handleSession_(body) {
+  const userId = body.user_id || 'naoya';
+  const band = normalizeCefrBand_(body.cefr || 'B1');
+  const index = loadChunksIndex_();
+  const progressMap = loadUserProgressMap_(userId);
+  const templates = getPassageTemplatesForBand_(band);
+  const passages = templates.map((tpl) => enrichPassageTemplate_(tpl, index, band, progressMap));
+  const stats = computeStatsFromIndex_(index, progressMap, band);
+  return { passages, cefr_band: band, ...stats };
+}
+
+function computeStatsFromIndex_(index, progressMap, band) {
+  const levels = cefrLevelsForBand_(band);
+  let reviewing = 0;
+  let graduated = 0;
+  let learning = 0;
+  let newCount = 0;
+
+  Object.values(index).forEach((chunk) => {
+    if (levels.indexOf(chunk.cefr) < 0) return;
+    const prog = progressMap[chunk.chunk_id];
+    if (!prog) {
+      newCount++;
+      return;
+    }
+    if (prog.status === 'graduated') graduated++;
+    else if (prog.status === 'learning') learning++;
+    else reviewing++;
+  });
+
+  return {
+    reviewing: reviewing + learning,
+    graduated,
+    learning,
+    new: newCount,
+  };
+}
+
 function handleLogEncounter_(body) {
   const sheet = getSheet_(SHEET_NAMES.ENCOUNTERS);
   const userId = body.user_id || 'naoya';
@@ -548,32 +588,7 @@ function handleStats_(body) {
   const band = normalizeCefrBand_(body.cefr || 'B1');
   const index = loadChunksIndex_();
   const progressMap = loadUserProgressMap_(userId);
-  const levels = cefrLevelsForBand_(band);
-
-  let reviewing = 0;
-  let graduated = 0;
-  let learning = 0;
-  let newCount = 0;
-
-  Object.values(index).forEach((chunk) => {
-    if (levels.indexOf(chunk.cefr) < 0) return;
-    const prog = progressMap[chunk.chunk_id];
-    if (!prog) {
-      newCount++;
-      return;
-    }
-    if (prog.status === 'graduated') graduated++;
-    else if (prog.status === 'learning') learning++;
-    else reviewing++;
-  });
-
-  return {
-    reviewing: reviewing + learning,
-    graduated,
-    learning,
-    new: newCount,
-    cefr_band: band,
-  };
+  return { ...computeStatsFromIndex_(index, progressMap, band), cefr_band: band };
 }
 
 // ===== Passage templates (Phase 2 — Phase 4 replaces with Claude generation) =====

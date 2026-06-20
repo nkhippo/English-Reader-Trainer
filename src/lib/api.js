@@ -1,5 +1,8 @@
 import { DEFAULT_GAS_URL } from './config.js';
 
+const READ_ACTIONS = new Set(['session', 'due_chunks', 'generate_passage', 'stats']);
+const REQUEST_TIMEOUT_MS = 30000;
+
 function getGasUrl() {
   return import.meta.env.VITE_GAS_URL || DEFAULT_GAS_URL;
 }
@@ -13,7 +16,16 @@ async function parseGasResponse(res, action) {
     throw new Error(`GAS ${action} returned non-JSON: ${raw.slice(0, 200)}`);
   }
   if (data.error) throw new Error(data.error);
+  if (data.status === 'ok' && data.service === 'english-reader-trainer' && !data.passages && action !== 'stats') {
+    throw new Error(`GAS ${action} returned health check instead of payload`);
+  }
   return data;
+}
+
+function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
 async function postAction(action, payload = {}) {
@@ -24,7 +36,7 @@ async function postAction(action, payload = {}) {
   }
 
   const body = JSON.stringify({ action, ...payload });
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body,
@@ -37,7 +49,7 @@ async function postAction(action, payload = {}) {
   return parseGasResponse(res, action);
 }
 
-/** GET fallback — reliable when GAS POST redirect loses the body. */
+/** GET — reliable for read actions against GAS Web App redirects. */
 async function getAction(action, payload = {}) {
   const url = getGasUrl();
   if (!url) {
@@ -46,7 +58,7 @@ async function getAction(action, payload = {}) {
   }
 
   const data = encodeURIComponent(JSON.stringify({ action, ...payload }));
-  const res = await fetch(`${url}?data=${data}`);
+  const res = await fetchWithTimeout(`${url}?data=${data}`);
 
   if (!res.ok) {
     throw new Error(`GAS ${action} failed: HTTP ${res.status}`);
@@ -56,11 +68,33 @@ async function getAction(action, payload = {}) {
 }
 
 async function callAction(action, payload = {}) {
+  if (READ_ACTIONS.has(action)) {
+    try {
+      return await getAction(action, payload);
+    } catch (getErr) {
+      console.warn(`[ERT] GET ${action} failed, retrying via POST:`, getErr);
+      return postAction(action, payload);
+    }
+  }
+
   try {
     return await postAction(action, payload);
   } catch (postErr) {
     console.warn(`[ERT] POST ${action} failed, retrying via GET:`, postErr);
     return getAction(action, payload);
+  }
+}
+
+export async function fetchSession({ userId, cefr }) {
+  try {
+    return await callAction('session', { user_id: userId, cefr });
+  } catch (err) {
+    const message = String(err?.message || err);
+    if (!message.includes('Unknown action')) throw err;
+
+    const passageRes = await callAction('generate_passage', { user_id: userId, cefr });
+    const statsRes = await callAction('stats', { user_id: userId, cefr });
+    return { ...passageRes, ...statsRes };
   }
 }
 

@@ -7,7 +7,7 @@ import { MarginaliaPanel } from './components/MarginaliaPanel.jsx';
 import { Footer } from './components/Footer.jsx';
 import { TranslationOverlay } from './components/TranslationOverlay.jsx';
 import { ProcessingOverlay } from './components/ProcessingOverlay.jsx';
-import { fetchGeneratePassage, fetchStats } from './lib/api.js';
+import { fetchSession } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
 import { USER_ID } from './lib/config.js';
@@ -30,53 +30,49 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ reviewing: 0, graduated: 0 });
 
-  const refreshStats = useCallback(async (band) => {
-    try {
-      const statsRes = await fetchStats({ userId: USER_ID, cefr: band });
-      setStats({
-        reviewing: statsRes.reviewing ?? 0,
-        graduated: statsRes.graduated ?? 0,
-      });
-    } catch (err) {
-      console.error('[ERT] stats refresh failed:', err);
-    }
-  }, []);
+  useEffect(() => {
+    let cancelled = false;
 
-  const loadContent = useCallback(async (band) => {
-    setLoading(true);
-    try {
-      const [passageRes, statsRes] = await Promise.all([
-        fetchGeneratePassage({ userId: USER_ID, cefr: band }),
-        fetchStats({ userId: USER_ID, cefr: band }),
-      ]);
-      const normalized = normalizePassagesFromApi(passageRes.passages || []);
-      setPassages(normalized.length > 0 ? normalized : filterMockByBand(band));
-      setStats({
-        reviewing: statsRes.reviewing ?? 0,
-        graduated: statsRes.graduated ?? 0,
-      });
-    } catch (err) {
-      console.error('[ERT] load failed:', err);
-      setPassages(filterMockByBand(band));
-    } finally {
-      setLoading(false);
+    async function loadContent(band) {
+      setLoading(true);
+      try {
+        const sessionRes = await fetchSession({ userId: USER_ID, cefr: band });
+        if (cancelled) return;
+
+        const normalized = normalizePassagesFromApi(sessionRes.passages || []);
+        setPassages(normalized.length > 0 ? normalized : filterMockByBand(band));
+        setStats({
+          reviewing: sessionRes.reviewing ?? 0,
+          graduated: sessionRes.graduated ?? 0,
+        });
+      } catch (err) {
+        if (cancelled) return;
+        console.error('[ERT] load failed:', err);
+        setPassages(filterMockByBand(band));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
-  }, []);
+
+    loadContent(cefrBand);
+    return () => {
+      cancelled = true;
+    };
+  }, [cefrBand]);
 
   const handleProgressUpdate = useCallback(async () => {
     try {
-      const passageRes = await fetchGeneratePassage({ userId: USER_ID, cefr: cefrBand });
-      const normalized = normalizePassagesFromApi(passageRes.passages || []);
+      const sessionRes = await fetchSession({ userId: USER_ID, cefr: cefrBand });
+      const normalized = normalizePassagesFromApi(sessionRes.passages || []);
       if (normalized.length > 0) setPassages(normalized);
-      await refreshStats(cefrBand);
+      setStats({
+        reviewing: sessionRes.reviewing ?? 0,
+        graduated: sessionRes.graduated ?? 0,
+      });
     } catch (err) {
       console.error('[ERT] progress refresh failed:', err);
     }
-  }, [cefrBand, refreshStats]);
-
-  useEffect(() => {
-    loadContent(cefrBand);
-  }, [cefrBand, loadContent]);
+  }, [cefrBand]);
 
   const handleCefrChange = (band) => {
     storeCefrBand(band);
