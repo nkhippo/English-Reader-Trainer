@@ -59,3 +59,24 @@ export function setGasUrl(url) {
 export function getStoredGasUrl() {
   return getGasUrl();
 }
+
+export async function checkBackendHealth() {
+  const url = getGasUrl();
+  if (!url) {
+    return { ok: false, error: 'GAS URL not configured' };
+  }
+
+  try {
+    const res = await fetch(url, { method: 'GET' });
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    if (data.status === 'ok' && data.service === 'english-reader-trainer') {
+      return { ok: true, phase: data.phase };
+    }
+    return { ok: false, error: 'Unexpected response' };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+}

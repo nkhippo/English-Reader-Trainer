@@ -1,5 +1,18 @@
 # Setup Guide — English Reader Trainer
 
+## Setup status
+
+| Step | Status |
+|------|--------|
+| Google Sheets (4 tabs) | ✅ Done |
+| Drive folder + subfolders | ✅ Done |
+| GAS deployed (Web App) | ✅ Done |
+| Script Properties set | ✅ Done |
+| Frontend GAS URL configured | ✅ Done |
+
+After setup, open ⚙ Settings in the app — **Backend: connected (phase 1)** should appear.
+Press **Got it** or **Still hard** and confirm rows appear in the `encounter_log` tab.
+
 ## Deployed resources
 
 | Resource | URL / ID |

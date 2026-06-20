@@ -31,7 +31,7 @@ docs/          Setup guide
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| 1 | ✅ | React UI + mock passages + GAS log_encounter |
+| 1 | ✅ | React UI + mock passages + GAS log_encounter (Sheets/Drive/GAS deployed) |
 | 2 | — | CEFR data import |
 | 3 | — | SRS engine |
 | 4 | — | Claude passage generation |

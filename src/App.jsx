@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MOCK_PASSAGES } from './data/mockPassages.js';
 import { useReader } from './hooks/useReader.js';
 import { Header } from './components/Header.jsx';
@@ -6,16 +6,28 @@ import { PassageView } from './components/PassageView.jsx';
 import { MarginaliaPanel } from './components/MarginaliaPanel.jsx';
 import { Footer } from './components/Footer.jsx';
 import { TranslationOverlay } from './components/TranslationOverlay.jsx';
-import { getStoredGasUrl, setGasUrl } from './lib/api.js';
+import { checkBackendHealth, getStoredGasUrl, setGasUrl } from './lib/api.js';
 
 export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [gasUrlInput, setGasUrlInput] = useState(getStoredGasUrl());
+  const [backendStatus, setBackendStatus] = useState({ checking: true });
 
   const reader = useReader(MOCK_PASSAGES);
 
+  useEffect(() => {
+    let cancelled = false;
+    checkBackendHealth().then((status) => {
+      if (!cancelled) setBackendStatus({ checking: false, ...status });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [gasUrlInput]);
+
   const saveGasUrl = () => {
     setGasUrl(gasUrlInput.trim());
+    setBackendStatus({ checking: true });
     setShowSettings(false);
   };
 
@@ -66,6 +78,16 @@ export default function App() {
       {showSettings && (
         <div className="settings-panel">
           <h3>Settings</h3>
+          <div className="backend-status">
+            Backend:{' '}
+            {backendStatus.checking ? (
+              <span className="backend-status__checking">checking…</span>
+            ) : backendStatus.ok ? (
+              <span className="backend-status__ok">connected (phase {backendStatus.phase})</span>
+            ) : (
+              <span className="backend-status__error">{backendStatus.error}</span>
+            )}
+          </div>
           <label>
             GAS Endpoint URL
             <input
@@ -76,7 +98,7 @@ export default function App() {
             />
           </label>
           <p className="settings-hint">
-            Deploy gas/Code.gs and paste the Web App URL here to enable encounter logging.
+            Encounter logging writes to the encounter_log sheet via log_encounter.
           </p>
           <button className="btn btn--primary" onClick={saveGasUrl}>
             Save

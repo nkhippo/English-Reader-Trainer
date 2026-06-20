@@ -424,6 +424,26 @@ button {
   line-height: 1.5;
 }
 
+.backend-status {
+  font-size: 12px;
+  margin-bottom: 14px;
+  color: var(--color-ink-soft);
+}
+
+.backend-status__ok {
+  color: var(--color-graduated);
+  font-weight: 600;
+}
+
+.backend-status__error {
+  color: var(--color-due);
+  font-weight: 600;
+}
+
+.backend-status__checking {
+  font-style: italic;
+}
+
 @media (max-width: 768px) {
   .reader {
     grid-template-columns: 1fr;
