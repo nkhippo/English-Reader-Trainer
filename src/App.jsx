@@ -6,6 +6,7 @@ import { PassageView } from './components/PassageView.jsx';
 import { MarginaliaPanel } from './components/MarginaliaPanel.jsx';
 import { Footer } from './components/Footer.jsx';
 import { TranslationOverlay } from './components/TranslationOverlay.jsx';
+import { ProcessingOverlay } from './components/ProcessingOverlay.jsx';
 import { fetchGeneratePassage, fetchStats } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
@@ -131,6 +132,8 @@ export default function App() {
       />
 
       <TranslationOverlay text={reader.passage?.ja ?? ''} visible={reader.translationVisible} />
+
+      <ProcessingOverlay visible={reader.actionsDisabled} />
     </div>
   );
 }

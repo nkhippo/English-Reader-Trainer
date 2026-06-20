@@ -464,6 +464,48 @@ html[lang='ja'] .note__meta {
   color: var(--color-page) !important;
 }
 
+.processing-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(247, 244, 237, 0.72);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.processing-overlay__content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.processing-overlay__spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--color-rule);
+  border-top-color: var(--color-ink);
+  border-radius: 50%;
+  animation: processing-spin 700ms linear infinite;
+}
+
+.processing-overlay__label {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--color-ink-soft);
+}
+
+@keyframes processing-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .translation-overlay {
   position: fixed;
   bottom: 84px;

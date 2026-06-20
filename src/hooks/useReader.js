@@ -148,6 +148,7 @@ export function useReader(passages, { onProgressUpdate } = {}) {
   // Keyboard navigation
   useEffect(() => {
     const onKeyDown = (e) => {
+      if (actionPendingRef.current) return;
       if (e.key === 'ArrowRight' || e.key === ' ') {
         e.preventDefault();
         nextPassage();

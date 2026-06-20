@@ -27,6 +27,7 @@ export const translations = {
     langGroupAria: 'Language',
     cefrGroupAria: 'CEFR level',
     loading: 'Loading…',
+    processing: 'Saving…',
   },
   ja: {
     reviewing: '復習中',
@@ -42,5 +43,6 @@ export const translations = {
     langGroupAria: '言語',
     cefrGroupAria: 'CEFR レベル',
     loading: '読み込み中…',
+    processing: '処理中…',
   },
 };
