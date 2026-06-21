@@ -1,289 +1,337 @@
-# Claude API — モデル・プロンプト現状と改善ワークフロー
+# Claude API — モデル・プロンプト・検証（現行仕様）
 
-> 最終更新: 2026-06-21  
-> ソース: `gas/Code.gs`（`ANTHROPIC_MODEL` および各 `callClaude*` 関数）
-
----
-
-## 1. 重要: テンプレと Claude の関係
-
-| コンテンツ | 生成方法 | Claude 依存 |
-|-----------|---------|------------|
-| **`shared/passage-templates.json`**（固定テンプレ 45 本） | リポジトリ内で **手書き** | ❌ 現状 Claude は使っていない |
-| **動的パッセージ**（hybrid / dynamic モード） | GAS `callClaudeGeneratePassage_()` | ✅ モデル + プロンプトに依存 |
-| **`chunks_master.ja_translation`** | GAS `callClaudeEnrich_()` | ✅ |
-| **`chunks_master.en_translation`** | GAS `callClaudeEnrichEnglish_()` | ✅ |
-
-**テンプレの質を Claude レベルに揃えたい**場合は、下記 **§6 のワークフロー** で `passage-templates.json` を Claude 生成物に差し替える必要があります。  
-動的生成用プロンプト（§4.3）が、テンプレ再生成のベースラインになります。
+> **最終更新:** 2026-06-21  
+> **ソース:** `gas/Code.gs`（コミット `3a5c22a` 以降）  
+> **設計根拠:** [claude-api-prompt-renewal-work-request.md](./claude-api-prompt-renewal-work-request.md)
 
 ---
 
-## 2. API 共通設定
+## 0. Claude レビュー依頼（このドキュメントの目的）
 
-| 項目 | 値 |
-|------|-----|
-| エンドポイント | `https://api.anthropic.com/v1/messages` |
-| パッセージ生成 | **`claude-sonnet-4-6`** (`MODEL_PASSAGE`) |
-| 品質 critique | **`claude-haiku-4-5-20251001`** (`MODEL_CRITIQUE`) |
-| enrich バッチ | **`claude-haiku-4-5-20251001`** (`MODEL_ENRICH`) |
-| API バージョン | `anthropic-version: 2023-06-01` |
-| パッセージ生成 | system + user 分離、`prior_contexts` 注入、self_check |
-| 詳細 | [claude-api-prompt-renewal-work-request.md](./claude-api-prompt-renewal-work-request.md) |
+English Reader Trainer は **SLA（第二言語習得）原理に基づくチャンク再会エンジン** です。2026-06 に Claude API のモデル・プロンプト・検証を全面リニューアルしました。
 
-### モデル使い分け（2026-06 更新後）
+**レビューしてほしい観点:**
 
-| 用途 | モデル | max_tokens | 備考 |
-|------|--------|------------|------|
-| 動的パッセージ生成 | **Sonnet 4.6** | 4,096 | system + user、prior_contexts |
-| 品質 critique | Haiku 4.5 | 2,048 | オフライン / warmup のみ |
-| 日本語訳 enrich | Haiku 4.5 | 16,384 | 125 件/回 |
-| 英語グロス enrich | Haiku 4.5 | 8,192 | 125 件/回 |
+1. 3 プロンプト（パッセージ生成 / ja enrich / en enrich）が SLA 原理（i+1、noticing、encoding variability、コアミーニング、L2-L2 グロス）を十分に実装しているか
+2. パッセージ生成の **prior_contexts 注入** が「異なる文脈で再会」の思想をプロンプトレベルで担保できているか
+3. critique rubric（7 基準・合計 11 点以上）の妥当性
+4. リアルタイム経路（高速 regex + self_check）とバックグラウンド経路（critique）の分離が UX と品質のバランスとして適切か
+5. 固定テンプレ 45 本（手書き）を `generateTemplateBatch_()` で Sonnet 再生成する前に、プロンプトの追加改善余地
+
+**運用ステータス（2026-06-21 時点）**
+
+| ステップ | 状態 |
+|---------|------|
+| コード反映（`gas/Code.gs`） | ✅ 完了・デプロイ済み |
+| `preparePromptRenewalRefresh()` | ✅ 実行済み（7,125 行クリア、critique 列追加） |
+| `enrichAllTranslations()` | 🔄 **実行待ち / 実行中** |
+| `enrichAllEnglishGlosses()` | ⬜ ja 完走後 |
+| `generateTemplateBatch_()` | ⬜ enrich 完走後 |
+| 固定テンプレ 45 本の差し替え | ⬜ サンプルレビュー後 |
+
+**GAS Web App:** `https://script.google.com/macros/s/AKfycbwEhfkkK_x3N0_4Qi1BlQ1rqq1taop5_D3qaPSogSHltkRk_3j6hDOE0ja00bIsYXjG/exec`
 
 ---
 
-## 3. 固定テンプレ JSON スキーマ
+## 1. コンテンツと Claude の関係
 
-`shared/passage-templates.json` の 1 エントリ:
+| コンテンツ | 生成方法 | モデル | 状態 |
+|-----------|---------|--------|------|
+| `chunks_master.ja_translation` | `callClaudeEnrich_()` | Haiku 4.5 | 🔄 再生成中 |
+| `chunks_master.en_translation` | `callClaudeEnrichEnglish_()` | Haiku 4.5 | ⬜ 待ち |
+| `chunks_master.example_sentence` | ja enrich と同時 | Haiku 4.5 | 🔄 再生成中 |
+| **動的パッセージ**（hybrid/dynamic） | `callClaudeGeneratePassage_()` | **Sonnet 4.6** | ✅ 新プロンプト |
+| **critique 採点** | `callClaudeCritiquePassage_()` | Haiku 4.5 | ✅ オフラインのみ |
+| **`shared/passage-templates.json`**（45 本） | **手書き**（Claude 未使用） | — | ⬜ Sonnet 再生成予定 |
+
+---
+
+## 2. モデル定数（`gas/Code.gs`）
+
+```javascript
+const MODEL_PASSAGE  = 'claude-sonnet-4-6';
+const MODEL_CRITIQUE = 'claude-haiku-4-5-20251001';
+const MODEL_ENRICH   = 'claude-haiku-4-5-20251001';
+```
+
+| 用途 | 定数 | max_tokens | バッチ |
+|------|------|------------|--------|
+| 動的パッセージ生成 | `MODEL_PASSAGE` | 4,096 | 1 本/回（最大 3 リトライ） |
+| 品質 critique | `MODEL_CRITIQUE` | 2,048 | 1 本/回 |
+| 日本語訳 enrich | `MODEL_ENRICH` | 16,384 | 125 件/回 |
+| 英語グロス enrich | `MODEL_ENRICH` | 8,192 | 125 件/回 |
+
+- エンドポイント: `https://api.anthropic.com/v1/messages`
+- API バージョン: `anthropic-version: 2023-06-01`
+- 認証: Script Property `ANTHROPIC_API_KEY`
+
+---
+
+## 3. SLA 原理とプロンプトの対応
+
+| SLA 原理 | 実装箇所 |
+|---------|---------|
+| 理解可能 input（真の i+1） | パッセージ system §1、`selectChunksForPassage_`（new 最大 2 個） |
+| 気づき（noticing） | `{{chunk}}` マークアップ + marginalia |
+| 処理水準（具体性） | パッセージ system §4、ja enrich の具体例文指示 |
+| **符号化の多様性** | **`getChunkPriorContexts_()` → user プロンプト注入** |
+| 用法基盤 | パッセージ system §3（典型共起語） |
+| コアミーニング | ja enrich（最頻出 1 語義）、`intended meaning` 注入 |
+| L2-L2 マッピング | en enrich（グロス自体 i+1、循環定義禁止） |
+
+---
+
+## 4. プロンプト全文（現行・`Code.gs` 実装）
+
+### 4.1 動的パッセージ生成 — `callClaudeGeneratePassage_()`
+
+**system** (`PASSAGE_SYSTEM_PROMPT_`):
+
+```
+You are an expert writer of graded reading passages for Japanese learners of English. Your passages power a spaced-repetition reading app whose single goal is to automatize knowledge of multi-word chunks (phrasal verbs, collocations, idioms, discourse markers) through repeated encounters in DIFFERENT contexts.
+
+Follow these principles without exception:
+
+1. COMPREHENSIBLE INPUT (true i+1). The words AROUND the target chunks must be ones the learner already knows — at or below the stated CEFR band. The target chunks are the ONLY new or practiced element (the "+1"). Never place an unknown word next to a target chunk; the learner must be able to lean on known context.
+
+2. INFERABILITY. For each target chunk, the situation must give concrete cues to its meaning, so a learner who does not yet know the chunk could reasonably guess it from context — without a dictionary.
+
+3. NATURAL USE. Each chunk must appear in the grammatical frame and with the typical collocates a fluent writer would actually use. Never twist a sentence just to fit a chunk. If two chunks cannot co-occur naturally, prioritize naturalness and say so in self_check.
+
+4. CONCRETE AND MEMORABLE. Write a vivid, specific scene — a particular person doing a particular thing in a particular place. Concrete, imageable situations are remembered far better than abstract statements. Never write generic filler such as "Many people think that..." or "In today's society...".
+
+5. CONTEXTUAL VARIETY. You will be told how each chunk appeared in PREVIOUS passages. Make THIS passage genuinely different: a different scenario, different collocates, a different sentence structure. Reusing a prior context defeats the entire purpose of the app.
+
+6. REGISTER BY CEFR BAND.
+   - A1/A2: short concrete sentences; everyday scenes (home, shopping, travel, daily routine); present and past simple dominant.
+   - B1: everyday plus light work and social topics; a wider range of connectors; some complex sentences.
+   - B2: may include abstract or argumentative topics and a reporting register; richer cohesion.
+
+Output ONLY valid JSON (no markdown fences), in exactly this shape:
+{
+  "text": "the passage as plain text",
+  "ja_translation": "natural Japanese translation faithful to the English",
+  "target_chunks": [
+    {"chunk_id": "...", "text": "exact substring as it appears in text", "char_start": 0, "char_end": 0}
+  ],
+  "self_check": {
+    "all_chunks_used_naturally": true,
+    "surrounding_vocab_within_band": true,
+    "each_chunk_inferable_from_context": true,
+    "different_from_prior_contexts": true,
+    "notes": "one short sentence; flag any compromise you had to make"
+  }
+}
+
+char_start and char_end are 0-based, end-exclusive indices into the "text" field.
+```
+
+**user** (`buildPassageUserPrompt_()` — テンプレート):
+
+```
+CEFR band: {A1/A2 | B1 | B2}
+Length: 3 to 6 sentences, 60 to 120 words total.
+
+Target chunks (embed ALL of them, each at least once):
+
+- "{chunk text}"  (chunk_id: {id})
+    intended meaning: {ja_translation or en_translation from chunks_master}
+    previously appeared as:          ← getChunkPriorContexts_() 最大 3 件
+      • {prior snippet 1}
+      • ...
+    make this encounter clearly different from the above.
+    — または初出時 —
+    this is the learner's FIRST encounter — introduce it in an especially clear, self-explaining context.
+
+Write the passage now.
+Revision instruction: {revision_hint}   ← critique 再生成時のみ
+```
+
+**prior_contexts の取得:** `getChunkPriorContexts_(chunkId, index, 3)`  
+`passages_meta` → Drive JSON → 該当チャンクを含む文を抽出。
+
+---
+
+### 4.2 品質 critique — `callClaudeCritiquePassage_()`（オフライン専用）
+
+```
+You are a strict reviewer of graded reading passages for CEFR {band} learners of English.
+Score each criterion 0–2 (0 = fails, 1 = weak, 2 = good).
+
+Passage: {text}
+Japanese translation: {ja_translation}
+Target chunks (with intended meaning + prior contexts): {chunkLines}
+
+Criteria:
+- naturalness
+- comprehensibility
+- inferability
+- chunk_integrity
+- variety
+- concreteness
+- translation_fidelity
+
+Output ONLY JSON:
+{
+  "scores": { ... },
+  "total": 0,
+  "verdict": "pass" or "revise",
+  "problems": ["..."],
+  "revision_hint": "..."
+}
+
+Pass threshold: total >= 11 AND no single criterion scores 0.
+```
+
+**合格判定:** `critiquePasses_()` — 全基準 > 0、合計 ≥ 11、`verdict !== 'revise'`
+
+---
+
+### 4.3 日本語訳 enrich — `callClaudeEnrich_()`
+
+```
+You are a bilingual English–Japanese lexicographer creating entries for a chunk-learning app. For each item, provide:
+
+- ja_translation: the CORE meaning in concise, natural Japanese. Capture the functional nucleus of the chunk, not a word-by-word gloss. If the chunk is polysemous, give the SINGLE most frequent sense only (the app stores one sense per chunk). Use 〜 to mark where words attach (e.g. "〜を引き受ける", "〜のおかげで").
+- example_sentence: keep the existing one if it is provided and good; otherwise write ONE natural, CONCRETE sentence (8–18 words) showing the chunk in its most typical context — a specific situation the learner can picture, never a generic statement.
+
+Keep the Japanese clear and natural for a general adult learner (avoid overly literary vocabulary).
+
+Return ONLY a JSON array, no markdown:
+[{"chunk_id":"...","ja_translation":"...","example_sentence":"..."}]
+
+Items: ${JSON.stringify(input)}
+```
+
+---
+
+### 4.4 英語グロス enrich — `callClaudeEnrichEnglish_()`
+
+```
+You are writing English-in-English glosses for a chunk-learning app used by Japanese learners. The gloss's job is to let a learner understand the item's meaning WITHOUT translating to Japanese — building a direct English-to-meaning pathway. Optimize for "a learner reads this and instantly gets it."
+
+For each item, provide:
+- en_translation: a short English gloss (about 6–15 words) capturing the single most frequent sense.
+
+Rules the gloss MUST follow:
+1. SIMPLER THAN THE HEADWORD. Use only words that are clearly easier than the item itself — roughly one to two CEFR levels below it.
+2. NO CIRCULAR DEFINITION. Never use the headword or its derivatives in the gloss.
+3. SHOW HOW IT IS USED, not just what it means. Include typical object or situation.
+4. EVOKE A SITUATION. Prefer concrete action or scene over abstract dictionary phrase.
+5. ONE SENSE ONLY. If polysemous, gloss only the most frequent sense.
+
+If ja_translation is provided, use it only as private context. Write the gloss in English only.
+
+Return ONLY a JSON array, no markdown:
+[{"chunk_id":"...","en_translation":"..."}]
+
+Items: ${JSON.stringify(input)}
+```
+
+---
+
+## 5. 検証アーキテクチャ（2 経路）
+
+| 経路 | タイミング | 生成 | 検証 | ユーザー体感 |
+|------|-----------|------|------|-------------|
+| **リアルタイム** | hybrid/dynamic 要求時 | Sonnet 1 発 | regex（文数・語数・位置・chunk 含有）+ `self_check` 真偽 | 低レイテンシ（1 往復） |
+| **バックグラウンド** | warmup / テンプレバッチ | Sonnet | critique（Haiku）→ revise なら `revision_hint` 付き再生成 | ユーザーに非同期 |
+
+### 5.1 リアルタイム検証
+
+| 関数 | 内容 |
+|------|------|
+| `validatePassageChunks_()` | 全ターゲット chunk が本文に含まれる |
+| `validatePassageQuality_()` | 文数 3–6、語数 40–140、位置情報一致 |
+| `validatePassageSelfCheck_()` | `self_check` の 4 フラグが `false` でない |
+
+### 5.2 キャッシュフィルタ（`findCachedPassage_()`）
+
+- `critique_verdict=revise` → **除外**
+- `critique_verdict=pass` → **優先**
+- verdict 空（リアルタイム生成直後）→ fallback として使用可
+
+### 5.3 チャンク選定 i+1 ガード（`selectChunksForPassage_()`）
+
+```
+1. new 1 個
+2. learning (stage 1–3) 最大 2 個
+3. reviewing (stage 4+) 最大 1 個
+4. 不足 → due から既習優先（new 以外）
+5. 不足 → new 2 個目まで（上限 2）
+6. 不足 → テンプレ先頭 chunk_texts
+```
+
+---
+
+## 6. GAS 手動関数一覧
+
+| 関数 | 用途 |
+|------|------|
+| `preparePromptRenewalRefresh()` | ja/en/example 全クリア + passages キャッシュ削除 + critique 列追加 |
+| `enrichAllTranslations()` | ja + example_sentence バッチ（125 件/回、自動継続） |
+| `enrichAllEnglishGlosses()` | en バッチ（ja 完走後） |
+| `auditTranslationCoverage()` | ja カバレッジ確認 |
+| `auditEnglishGlossCoverage()` | en カバレッジ確認 |
+| `generateTemplateBatch_(band, count)` | テンプレ候補生成 → Drive `shared/template-batch-*.json` |
+| `warmupPassagesForBand_(band, count)` | critique 合格パッセージを事前キャッシュ |
+| `generatePassageWithCritique_(...)` | 内部: 生成 + critique ループ |
+
+---
+
+## 7. スプレッドシートスキーマ（更新後）
+
+### `chunks_master`
+
+| 列 | リフレッシュ後 |
+|----|--------------|
+| `ja_translation` | 空 → enrich で再填入 |
+| `en_translation` | 空 → enrich で再填入 |
+| `example_sentence` | 空 → ja enrich で再填入 |
+
+### `passages_meta`（列追加）
+
+| 列 | 説明 |
+|----|------|
+| `critique_total` | critique 合計点（0–14） |
+| `critique_verdict` | `pass` / `revise` / 空（リアルタイム） |
+
+**リフレッシュで触らないもの:** `user_progress`, `encounter_log`
+
+---
+
+## 8. 固定テンプレ JSON スキーマ
 
 ```json
 {
   "passage_id": "ps_001",
   "cefr_band": "B1",
-  "text_markup": "We {{managed to}} finish on time. It {{turned out}} well.",
-  "ja_translation": "私たちはなんとか時間通りに終えた。結果的にうまくいった。",
-  "chunk_texts": ["managed to", "turned out"]
-}
-```
-
-| フィールド | 説明 |
-|-----------|------|
-| `passage_id` | 一意 ID（`ps_` プレフィックス推奨） |
-| `cefr_band` | `A1A2` / `B1` / `B2` |
-| `text_markup` | ターゲットチャンクを `{{chunk text}}` で囲んだ英文 |
-| `ja_translation` | パッセージ全体の自然な日本語訳 |
-| `chunk_texts` | 埋め込むチャンク文字列（markup 内と **完全一致**） |
-
-GAS は Drive の同名 JSON を読み、`enrichPassageTemplate_()` で `chunks_master` から gloss を付与します。
-
----
-
-## 4. プロンプト全文（現行）
-
-### 4.1 日本語訳バッチ — `callClaudeEnrich_()`
-
-**関数:** `enrichTranslationsBatch()` / `enrichAllTranslations()`  
-**入力:** 最大 125 件 `{ chunk_id, text, type, example_sentence }`
-
-```
-You are a bilingual English-Japanese lexicographer. For each item, provide:
-- ja_translation: concise natural Japanese (for chunks include 〜 where needed)
-- example_sentence: English example (keep existing if provided, else create one natural 8-18 word sentence)
-
-Return ONLY a JSON array, no markdown:
-[{"chunk_id":"...","ja_translation":"...","example_sentence":"..."}]
-
-Items:
-${JSON.stringify(input)}
-```
-
-**出力パース:** レスポンスから markdown フェンスを除去 → `JSON.parse`
-
----
-
-### 4.2 英語グロスバッチ — `callClaudeEnrichEnglish_()`
-
-**関数:** `enrichEnglishGlossesBatch()` / `enrichAllEnglishGlosses()`  
-**入力:** 最大 125 件 `{ chunk_id, text, type, cefr, ja_translation }`
-
-```
-You are an English lexicographer writing learner-friendly glosses for CEFR vocabulary items.
-For each item, provide:
-- en_translation: a concise English gloss (about 6-15 words)
-  - For single words: a brief definition using simple language
-  - For phrasal verbs / multi-word chunks: explain the meaning plainly (e.g. "to switch on a device")
-  - Match complexity to the CEFR level shown
-If ja_translation is provided, use it only as context. Write the gloss in English only.
-
-Return ONLY a JSON array, no markdown:
-[{"chunk_id":"...","en_translation":"..."}]
-
-Items:
-${JSON.stringify(input)}
-```
-
----
-
-### 4.3 動的パッセージ生成 — `callClaudeGeneratePassage_()`
-
-**関数:** `generateDynamicPassage_()` / hybrid モードの `generateDynamicPassageClaude_()`  
-**入力:** 2〜4 チャンク `{ chunk_id, text, cefr }` + CEFR バンド
-
-```
-Write a natural English reading passage for CEFR ${cefrHint} learners.
-
-Requirements:
-- 3 to 6 sentences, 60-120 words total
-- Use ONLY vocabulary appropriate for CEFR ${cefrHint} and below (i+1 principle)
-- Naturally embed ALL target chunks below (no forced or awkward insertion)
-- Provide accurate Japanese translation
-- For each chunk, report exact char_start and char_end (0-based, end exclusive) in the English text
-
-Return ONLY JSON, no markdown:
-{
-  "text": "full English passage as plain text",
-  "ja_translation": "natural Japanese translation",
-  "target_chunks": [
-    {"chunk_id":"...","text":"exact substring","char_start":0,"char_end":0}
-  ]
-}
-
-Target chunks:
-${JSON.stringify(chunkList)}
-```
-
-`${cefrHint}` は `A1A2` バンドのとき `"A1/A2"`、それ以外はバンド名（`B1` / `B2`）。
-
----
-
-## 5. 生成後の検証・後処理（動的パッセージのみ）
-
-### 5.1 `validatePassageChunks_()`
-
-- 英文（小文字化）に **すべてのターゲットチャンク** が含まれること
-
-### 5.2 `validatePassageQuality_()`
-
-| チェック | 条件 |
-|---------|------|
-| 英文・和訳 | 非空 |
-| 文数 | 3〜6 文 |
-| 語数 | 40〜140 語 |
-| ターゲット数 | 2 件以上 |
-| 位置情報 | 各 chunk の `char_start`/`char_end` が英文の部分文字列と一致 |
-
-不合格 → 最大 **3 回** 再生成。3 回失敗 → テンプレ fallback。
-
-### 5.3 マークアップ変換
-
-`buildTextMarkupFromPositions_()` が `char_start`/`char_end` から `{{chunk}}` 形式の `text_markup` を生成。
-
-### 5.4 チャンク選定（生成前）
-
-`selectChunksForPassage_()` の優先順:
-
-1. new チャンク 1 件
-2. learning（stage 1–3）最大 2 件
-3. reviewing（stage 4+）最大 1 件
-4. 不足時 new / due から補充
-5. それでも不足 → テンプレ先頭の chunk_texts
-
----
-
-## 6. テンプレ再生成ワークフロー（Claude 改善案 → 取り込み）
-
-### Step A — Claude に改善案を依頼
-
-Claude Web / Projects / API に以下をコピペし、**改善プロンプト案** と **サンプルテンプレ 3 本**（各バンド 1 本）を返してもらう。
-
-<details>
-<summary>📋 コピペ用依頼文（クリックで展開）</summary>
-
-```
-あなたは English Reader Trainer という CEFR ベースの英語多読アプリの編集者です。
-
-## 現状
-- 固定テンプレ JSON: shared/passage-templates.json（A1A2/B1/B2 各 15 本、計 45 本）
-- 現テンプレは手書きで、Claude API は使っていない
-- 動的生成は GAS + claude-haiku-4-5-20251001 + 下記プロンプト
-
-## 動的生成プロンプト（現行）
-Write a natural English reading passage for CEFR {band} learners.
-- 3 to 6 sentences, 60-120 words
-- CEFR {band} and below only (i+1)
-- Embed ALL target chunks naturally
-- Japanese translation
-- char_start/char_end for each chunk
-
-## 固定テンプレ JSON スキーマ
-{
-  "passage_id": "ps_xxx",
-  "cefr_band": "B1",
-  "text_markup": "We {{managed to}} finish. It {{turned out}} well.",
+  "text_markup": "We {{managed to}} finish on time.",
   "ja_translation": "...",
   "chunk_texts": ["managed to", "turned out"]
 }
-
-## 依頼
-1. 動的生成プロンプトの改善案（system/user 分離、CEFR 別ガイドライン、自然さ・多様性・チャンク埋め込み品質）
-2. テンプレ専用プロンプト案（15 本/バンド一括生成向け、重複テーマ回避、chunk カバレッジ最大化）
-3. モデル推奨（Haiku vs Sonnet、用途別）
-4. 各バンド 1 本ずつ、改善後プロンプトで生成したサンプル JSON
-5. validatePassageQuality_ 相当の品質チェックリスト追加案
-
-制約:
-- チャンクは chunks_master（CEFR 語彙 ~7125 件）から選ぶ想定
-- A1A2 は日常・短い文、B2 はやや抽象・報告文体も可
-- text_markup の {{}} は chunk_texts と完全一致
 ```
 
-</details>
-
-### Step B — 改善をコードに反映
-
-| 変更箇所 | 内容 |
-|---------|------|
-| `gas/Code.gs` | `ANTHROPIC_MODEL`、各プロンプト、必要なら `validatePassageQuality_` |
-| `shared/passage-templates.json` | Claude 生成テンプレで全面 or 段階的差し替え |
-| `src/lib/chunkGlosses.js` | 新 chunk に fallback が必要な場合のみ |
-| Drive `shared/passage-templates.json` | GAS 用に再アップロード |
-| GAS | 再デプロイ → `config.js` URL 更新 → push |
-
-### Step C — 一括テンプレ生成用 GAS 関数（未実装・追加候補）
-
-テンプレ 45 本を API で作り直す場合、次のような専用関数を `Code.gs` に追加するのが安全:
-
-```javascript
-// 案: generateTemplateBatch_(band, count, chunkPool)
-// - chunks_master からバンド適合チャンクをサンプリング
-// - 改善版プロンプトで N 本生成
-// - passage-templates.json 形式で Logger / Drive に出力
-// - 人間レビュー後に shared/ にマージ
-```
+- 現行 45 本は **手書き**（A1A2/B1/B2 各 15 本）
+- 再生成: `generateTemplateBatch_("B1", 1)` → Naoya レビュー → `shared/passage-templates.json` マージ
 
 ---
 
-## 7. 改善検討メモ（未適用）
-
-> Claude への依頼結果をここに追記する。
-
-| 項目 | 現状 | 改善案（TBD） |
-|------|------|--------------|
-| モデル（テンプレ生成） | Haiku 4.5 | Sonnet 推奨？ |
-| モデル（enrich バッチ） | Haiku 4.5 | 現状維持でコスト優先？ |
-| system プロンプト | なし | 役割・禁止事項を分離 |
-| CEFR 別ガイドライン | 1 行のみ | A1A2/B1/B2 別 rubric |
-| テーマ多様性 | 指定なし | 日常/仕事/旅行など明示 |
-| テンプレ重複回避 | なし | 既存 passage_id / 冒頭文を exclude |
-| 和訳スタイル | "natural Japanese" のみ | 多読向け（文語寄り/口語寄り）指定 |
-
----
-
-## 8. 関連ファイル
+## 9. 関連ファイル
 
 | ファイル | 役割 |
 |---------|------|
-| `gas/Code.gs` | モデル定数、3 プロンプト、検証、hybrid |
-| `shared/passage-templates.json` | 固定テンプレ（手書き） |
-| `src/lib/localPassages.js` | フロント即時 fallback |
-| `src/lib/chunkGlosses.js` | ローカル gloss fallback |
-| `docs/setup.md` | デプロイ・Script Property |
-| `docs/product-overview.md` | Phase 4 概要 |
+| `gas/Code.gs` | 全 Claude 呼び出し・検証・hybrid |
+| `docs/claude-api-prompt-renewal-work-request.md` | リニューアル設計書（依頼元） |
+| `docs/product-overview.md` | アプリ思想・全体仕様 |
+| `docs/setup.md` | デプロイ・運用手順（Phase 4b） |
+| `shared/passage-templates.json` | 固定テンプレ（手書き、再生成予定） |
 
 ---
 
-## 9. 変更履歴
+## 10. 変更履歴
 
 | 日付 | 内容 |
 |------|------|
-| 2026-06-21 | 初版 — 現行モデル・プロンプト・テンプレ/動的の区別を文書化 |
+| 2026-06-21 午前 | 初版 — Before 状態の文書化 |
+| 2026-06-21 午後 | **After 反映** — Sonnet/Haiku 分離、全プロンプト更新、prior_contexts、critique、refresh 関数。enrich 再実行フェーズ開始 |
