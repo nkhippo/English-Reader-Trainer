@@ -4,7 +4,7 @@
  * Script Properties:
  *   SPREADSHEET_ID, DRIVE_ROOT_ID
  *   ANTHROPIC_API_KEY — for ja_translation / en_translation batches
- *   USE_DYNAMIC_PASSAGES — set to "true" to enable Claude passage generation (Phase 4)
+ *   USE_DYNAMIC_PASSAGES — "hybrid" (default), "true" (always Claude), "false"/"template" (templates only)
  *
  * Manual setup (Apps Script editor):
  *   1. setupSheets() — once
@@ -914,12 +914,51 @@ function handleDueChunks_(body) {
   });
 
   due.sort((a, b) => (b.still_hard_count || 0) - (a.still_hard_count || 0));
+  shuffleArrayInPlace_(due);
 
-  const dueOut = due.slice(0, limit);
+  let dueOut = due.slice(0, limit);
+
+  // When nothing is formally due (e.g. all graduated with future next_due_at),
+  // rotate oldest-seen chunks so review continues instead of fixed template backfill.
+  if (dueOut.length === 0) {
+    dueOut = collectMaintenanceDueChunks_(index, progressMap, band, now, limit);
+  }
+
   const remaining = limit - dueOut.length;
   const newOut = newChunks.slice(0, Math.max(remaining, 0));
 
   return { due_chunks: dueOut, new_chunks: newOut, cefr_band: band };
+}
+
+/** Minimum hours since last encounter before a non-due chunk enters maintenance rotation. */
+const MAINTENANCE_MIN_HOURS = 24;
+
+function collectMaintenanceDueChunks_(index, progressMap, band, now, limit) {
+  const cutoff = now.getTime() - MAINTENANCE_MIN_HOURS * 3600000;
+  const candidates = [];
+
+  Object.values(index).forEach((chunk) => {
+    if (!chunkInSrsScope_(chunk.cefr, band)) return;
+    const prog = progressMap[chunk.chunk_id];
+    if (!prog || isDue_(prog.next_due_at, now)) return;
+    const lastMs = new Date(prog.last_encountered_at).getTime();
+    if (isNaN(lastMs) || lastMs > cutoff) return;
+    candidates.push({ chunk, prog, lastMs });
+  });
+
+  candidates.sort((a, b) => a.lastMs - b.lastMs);
+  shuffleArrayInPlace_(candidates);
+
+  return candidates.slice(0, limit).map(({ chunk, prog }) => ({
+    chunk_id: chunk.chunk_id,
+    text: chunk.text,
+    cefr: chunk.cefr,
+    srs_stage: prog.srs_stage,
+    last_encountered_at: prog.last_encountered_at,
+    status: prog.status,
+    still_hard_count: prog.still_hard_count,
+    maintenance: true,
+  }));
 }
 
 function mergeExcludePassageIds_(userId, clientIds) {
@@ -957,9 +996,10 @@ function getPassageMode_() {
   const v = String(
     PropertiesService.getScriptProperties().getProperty('USE_DYNAMIC_PASSAGES') || '',
   ).toLowerCase();
+  if (v === 'false' || v === 'template') return 'template';
   if (v === 'true') return 'dynamic';
-  if (v === 'hybrid') return 'hybrid';
-  return 'template';
+  // Default hybrid so SRS due/new chunks drive passage selection.
+  return 'hybrid';
 }
 
 function buildPassageForUser_(userId, band, index, progressMap, excludePassageIds) {
@@ -1141,7 +1181,9 @@ function selectChunksForPassage_(dueData, progressMap, index, band) {
     due.slice(0, 4).forEach(add);
   }
   if (selected.length < 2) {
-    getPassageTemplatesForBand_(band)[0].chunk_texts.forEach((text) => {
+    const templates = getPassageTemplatesForBand_(band);
+    const tpl = templates[Math.floor(Math.random() * templates.length)];
+    (tpl.chunk_texts || []).forEach((text) => {
       add(index[text.toLowerCase().trim()] || fallbackChunk_(text, band));
     });
   }

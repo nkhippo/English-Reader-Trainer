@@ -9,6 +9,7 @@
 | [setup.md](./setup.md) | GAS / Drive / GitHub Pages のセットアップ・運用手順 |
 | [claude-api.md](./claude-api.md) | Claude モデル・プロンプト全文・検証（**Claude レビュー用**） |
 | [claude-api-prompt-renewal-work-request.md](./claude-api-prompt-renewal-work-request.md) | 2026-06 プロンプトリニューアル設計書 |
+| [chunk-lifecycle-design.md](./chunk-lifecycle-design.md) | チャンク提案・AI 生成・データ管理（**Claude 設計レビュー用**） |
 | [README.md](../README.md) | リポジトリ概要 |
 | 公開アプリ | https://nkhippo.github.io/English-Reader-Trainer/ |
 | GAS Web App | `https://script.google.com/macros/s/AKfycbzrOiah1OH04LD3jj0XlJiInhaK-aMkZloRbyiZjEavHRNkAhZOQ3g81TOUo_JCmzXE/exec` |
@@ -73,7 +74,7 @@
 ブラウザ (React / GitHub Pages)
   ├─ passage-templates.json 同梱（45 本・即時 fallback）
   ├─ 先読みキュー 3 本
-  └─ 「理解した」→ キュー / ローカルテンプレ即表示（~200ms）
+  └─ 「理解した」→ 先読みキュー / GAS hybrid（SRS 駆動）→ ローカルテンプレ fallback
        ↕ GAS Web App (hybrid)
 Google Apps Script
   ├─ キャッシュ (critique_verdict=pass 優先)
@@ -112,9 +113,9 @@ Claude API
 
 | `USE_DYNAMIC_PASSAGES` | 挙動 |
 |------------------------|------|
-| `hybrid`（推奨） | キャッシュ → テンプレ → 条件付き Sonnet 生成 |
+| `hybrid`（**デフォルト**） | キャッシュ → テンプレ → 条件付き Sonnet 生成 |
 | `true` | 常に Sonnet 優先 |
-| 未設定 / `false` | テンプレのみ |
+| `false` / `template` | テンプレのみ |
 
 **hybrid フロー**
 

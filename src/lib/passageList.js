@@ -52,25 +52,14 @@ export async function acquireNextPassageIndex({
     return idx;
   };
 
-  // 1. Instant: passage already in the prefetch queue.
+  // 1. Instant: passage already in the prefetch queue (SRS-driven from GAS).
   const queued = takeQueuedPassage?.() ?? null;
   if (queued) {
     const idx = tryAppend(queued);
     if (idx >= 0) return idx;
   }
 
-  // 2. Fast local templates — avoid blocking on slow GAS when offline or cold.
-  try {
-    const local = await pickLocal(seenIds());
-    if (local) {
-      const idx = tryAppend(local);
-      if (idx >= 0) return idx;
-    }
-  } catch (err) {
-    console.warn('[ERT] local passage pick failed:', err);
-  }
-
-  // 3. Timed network prefetch.
+  // 2. Timed network prefetch — due/new chunks from GAS hybrid pipeline.
   const prefetched = await tryTimedNetwork(
     consumePrefetched(),
     'prefetch next passage',
@@ -80,7 +69,7 @@ export async function acquireNextPassageIndex({
     if (idx >= 0) return idx;
   }
 
-  // 4. Timed remote fetch (last resort).
+  // 3. Timed remote fetch when prefetch queue is empty.
   const remote = await tryTimedNetwork(
     fetchRemote(seenIds()),
     'remote next passage',
@@ -88,6 +77,17 @@ export async function acquireNextPassageIndex({
   if (remote) {
     const idx = tryAppend(remote);
     if (idx >= 0) return idx;
+  }
+
+  // 4. Local templates — offline / GAS timeout fallback only.
+  try {
+    const local = await pickLocal(seenIds());
+    if (local) {
+      const idx = tryAppend(local);
+      if (idx >= 0) return idx;
+    }
+  } catch (err) {
+    console.warn('[ERT] local passage pick failed:', err);
   }
 
   return null;
