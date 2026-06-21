@@ -6,13 +6,15 @@ export function Footer({
   onSuspend,
   hardFlash,
   actionsDisabled,
+  isProcessing,
   suspendDisabled,
   suspendQueued,
 }) {
   const { t } = useI18n();
+  const footerClass = isProcessing ? 'footer footer--processing' : 'footer';
 
   return (
-    <footer className="footer">
+    <footer className={footerClass}>
       <div className="footer__left">
         <button
           className={`btn btn--ghost ${hardFlash ? 'btn--hard-flash' : ''}`}
@@ -33,8 +35,21 @@ export function Footer({
         </button>
       </div>
       <div className="footer__right">
-        <button className="btn btn--primary" onClick={onGotIt} disabled={actionsDisabled}>
-          {t.gotIt}
+        <button
+          type="button"
+          className={`btn btn--primary ${isProcessing ? 'btn--processing' : ''}`}
+          onClick={onGotIt}
+          disabled={actionsDisabled}
+          aria-busy={isProcessing || undefined}
+        >
+          {isProcessing ? (
+            <>
+              <span className="btn__spinner" aria-hidden="true" />
+              {t.gotItProcessing}
+            </>
+          ) : (
+            t.gotIt
+          )}
         </button>
       </div>
     </footer>

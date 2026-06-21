@@ -150,7 +150,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     [applyAfterTransition, currentIndex, passageCount],
   );
 
-  const advanceToNext = useCallback(
+  const advanceToNextInternal = useCallback(
     async ({ autoStart = false } = {}) => {
       if (currentIndex + 1 < passageCount()) {
         return transitionTo(currentIndex + 1, 'next', { autoStart });
@@ -171,6 +171,14 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     [currentIndex, onAdvancePastEnd, passageCount, resetReadingTimer, transitionTo],
   );
 
+  const advanceToNext = useCallback(
+    async (opts = {}) => {
+      if (!opts.internal && actionPendingRef.current) return false;
+      return advanceToNextInternal(opts);
+    },
+    [advanceToNextInternal],
+  );
+
   const releaseActionLock = useCallback(() => {
     clearTimeout(actionLockTimerRef.current);
     actionLockTimerRef.current = null;
@@ -181,6 +189,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
 
   const beginAction = useCallback(() => {
     if (actionPendingRef.current) return false;
+    if (!passage?.id) return false;
     actionPendingRef.current = true;
     setActionsDisabled(true);
     setIsSaving(true);
@@ -190,7 +199,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       releaseActionLock();
     }, ACTION_LOCK_TIMEOUT_MS);
     return true;
-  }, [releaseActionLock]);
+  }, [passage, releaseActionLock]);
 
   const prevPassage = useCallback(() => {
     transitionTo(currentIndex - 1, 'prev');
@@ -254,23 +263,30 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       resetMarginalia();
       recordEncounter(signal);
       const autoStart = !pauseAfterActionRef.current;
-      let advanced = false;
       try {
-        advanced = await advanceToNext({ autoStart });
+        const advanced = await advanceToNextInternal({ autoStart });
+        if (!advanced) {
+          activateTimer({ resume: true });
+        }
       } finally {
         pauseAfterActionRef.current = false;
         setPauseAfterAction(false);
-      }
-      if (!advanced) {
         releaseActionLock();
-        activateTimer({ resume: true });
       }
     },
-    [activateTimer, advanceToNext, recordEncounter, releaseActionLock, resetMarginalia, stopTimer],
+    [
+      activateTimer,
+      advanceToNextInternal,
+      recordEncounter,
+      releaseActionLock,
+      resetMarginalia,
+      stopTimer,
+    ],
   );
 
   const handleGotIt = useCallback(async () => {
-    if (!canInteract || !beginAction()) return;
+    if (actionPendingRef.current || !canInteract) return;
+    if (!beginAction()) return;
     try {
       await finishPassageAction('got_it');
     } catch (err) {
@@ -280,16 +296,17 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   }, [beginAction, canInteract, finishPassageAction, releaseActionLock]);
 
   const handleStillHard = useCallback(async () => {
-    if (!canInteract || !beginAction()) return;
+    if (actionPendingRef.current || !canInteract) return;
+    if (!beginAction()) return;
     try {
       await finishPassageAction('still_hard');
+      setHardFlash(true);
+      await new Promise((resolve) => setTimeout(resolve, 240));
+      setHardFlash(false);
     } catch (err) {
       console.error('[ERT] still_hard failed:', err);
       releaseActionLock();
     }
-    setHardFlash(true);
-    await new Promise((resolve) => setTimeout(resolve, 240));
-    setHardFlash(false);
   }, [beginAction, canInteract, finishPassageAction, releaseActionLock]);
 
   const selectChunk = useCallback(
@@ -317,10 +334,6 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     setMarginaliaOpen(false);
     setActiveChunkId(null);
   }, []);
-
-  useEffect(() => {
-    releaseActionLock();
-  }, [currentIndex, releaseActionLock]);
 
   useEffect(() => {
     return () => clearTimeout(actionLockTimerRef.current);

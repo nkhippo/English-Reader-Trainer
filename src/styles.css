@@ -675,11 +675,33 @@ html[lang='ja'] .note__meta {
   background: rgba(26, 34, 54, 0.06);
 }
 
+.btn--processing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 9.5em;
+  cursor: wait;
+}
+
+.btn__spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(247, 244, 237, 0.35);
+  border-top-color: var(--color-page);
+  border-radius: 50%;
+  animation: processing-spin 700ms linear infinite;
+  flex-shrink: 0;
+}
+
+.footer--processing {
+  pointer-events: none;
+}
+
 .processing-overlay {
   position: fixed;
   inset: 0;
-  bottom: var(--footer-offset);
-  z-index: 100;
+  z-index: 110;
   display: flex;
   align-items: center;
   justify-content: center;

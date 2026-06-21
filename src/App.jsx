@@ -181,8 +181,14 @@ export default function App() {
         onGotIt={reader.handleGotIt}
         onSuspend={reader.pauseReading}
         hardFlash={reader.hardFlash}
+        isProcessing={reader.isSaving}
         actionsDisabled={
-          reader.actionsDisabled || reader.awaitingStart || reader.isPaused || !reader.isReadingStarted
+          reader.actionsDisabled
+          || reader.isSaving
+          || reader.isTransitioning
+          || reader.awaitingStart
+          || reader.isPaused
+          || !reader.isReadingStarted
         }
         suspendDisabled={
           reader.awaitingStart || reader.isPaused || !reader.isReadingStarted
