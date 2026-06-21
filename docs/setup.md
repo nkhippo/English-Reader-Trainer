@@ -180,7 +180,7 @@ Set in Apps Script → Project Settings → Script properties.
 
 ### 1. Upload passage templates (recommended)
 
-Place `shared/passage-templates.json` in Drive `/EnglishReaderTrainer/shared/` (10 templates per band: A1A2, B1, B2).
+Place `shared/passage-templates.json` in Drive `/EnglishReaderTrainer/shared/` (15 templates per band: A1A2, B1, B2).
 
 The frontend bundles the same JSON for **instant local fallback** when you tap **Got it** / **Still hard**. GAS loads it from Drive when serving `/session` and `/generate_passage`; if missing, inline fallback (3 per band) is used.
 

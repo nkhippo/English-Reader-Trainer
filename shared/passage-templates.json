@@ -69,6 +69,41 @@
       "text_markup": "We {{get up}} late on holiday. We {{go out}} for breakfast and {{look at}} the sea. The day starts with {{a little}} sunshine and calm air.",
       "ja_translation": "休日は遅く起きる。朝食を食べに出かけて海を見る。一日は少しの日差しと穏やかな空気で始まる。",
       "chunk_texts": ["get up", "go out", "look at", "a little"]
+    },
+    {
+      "passage_id": "ps_a1_11",
+      "cefr_band": "A1A2",
+      "text_markup": "I {{wake up}} late and cannot {{look for}} my keys. At noon my brother {{come back}} home and helps me search the kitchen.",
+      "ja_translation": "遅く起きて、鍵が見つからない。正午ごろ兄が家に戻ってきて、キッチンを一緒に探してくれる。",
+      "chunk_texts": ["wake up", "look for", "come back"]
+    },
+    {
+      "passage_id": "ps_a1_12",
+      "cefr_band": "A1A2",
+      "text_markup": "Please {{turn off}} the TV. I {{stand up}} and {{hurry up}} to catch the bus to school.",
+      "ja_translation": "テレビを消して。立ち上がって、学校行きのバスに間に合うよう急ぐ。",
+      "chunk_texts": ["turn off", "stand up", "hurry up"]
+    },
+    {
+      "passage_id": "ps_a1_13",
+      "cefr_band": "A1A2",
+      "text_markup": "We {{wait for}} the rain to stop. Then we {{go back}} outside for {{a little}} walk around the block.",
+      "ja_translation": "雨が止むのを待つ。それから外に戻って、ブロックを少し歩く。",
+      "chunk_texts": ["wait for", "go back", "a little"]
+    },
+    {
+      "passage_id": "ps_a1_14",
+      "cefr_band": "A1A2",
+      "text_markup": "Every morning I {{wake up}}, {{turn on}} the kettle, and {{sit down}} for a quiet breakfast.",
+      "ja_translation": "毎朝起きて、やかんの火をつけ、静かに朝食のために座る。",
+      "chunk_texts": ["wake up", "turn on", "sit down"]
+    },
+    {
+      "passage_id": "ps_a1_15",
+      "cefr_band": "A1A2",
+      "text_markup": "Before we {{go out}}, I {{look for}} my hat and {{pick up}} my bag by the door.",
+      "ja_translation": "出かける前に帽子を探して、ドアのそばのかばんを手に取る。",
+      "chunk_texts": ["go out", "look for", "pick up"]
     }
   ],
   "B1": [
@@ -141,6 +176,41 @@
       "text_markup": "After the talk, several people {{spoke up}} with ideas. The facilitator {{laid out}} next steps. Together we {{come up with}} a timeline everyone could accept.",
       "ja_translation": "講演の後、数人がアイデアを発言した。ファシリテーターが次のステップを提示した。全員が受け入れられるスケジュールを一緒に考え出した。",
       "chunk_texts": ["spoke up", "laid out", "come up with"]
+    },
+    {
+      "passage_id": "ps_011",
+      "cefr_band": "B1",
+      "text_markup": "We could not {{figure out}} the bug at first. After we {{work out}} the cause, we {{end up}} with a simpler design.",
+      "ja_translation": "最初はバグの原因がわからなかった。原因を解明したあと、よりシンプルな設計に落ち着いた。",
+      "chunk_texts": ["figure out", "work out", "end up"]
+    },
+    {
+      "passage_id": "ps_012",
+      "cefr_band": "B1",
+      "text_markup": "Do not {{give up}} yet. Try to {{keep up}} with the pace and {{deal with}} one task at a time.",
+      "ja_translation": "まだ諦めないで。ペースについていき、一度に一つのタスクに対処してみて。",
+      "chunk_texts": ["give up", "keep up", "deal with"]
+    },
+    {
+      "passage_id": "ps_013",
+      "cefr_band": "B1",
+      "text_markup": "I {{look forward to}} the trip. I want to {{find out}} what the city is like. It may {{turn out}} to be our best holiday yet.",
+      "ja_translation": "その旅行が待ち遠しい。街がどんなところか知りたい。今までで最高の休暇になるかもしれない。",
+      "chunk_texts": ["look forward to", "find out", "turn out"]
+    },
+    {
+      "passage_id": "ps_014",
+      "cefr_band": "B1",
+      "text_markup": "Many students {{take part in}} the club. They {{pay attention}} in class and often {{come up with}} good ideas.",
+      "ja_translation": "多くの生徒がクラブに参加している。授業では注意して聞き、よく良いアイデアを思いつく。",
+      "chunk_texts": ["take part in", "pay attention", "come up with"]
+    },
+    {
+      "passage_id": "ps_015",
+      "cefr_band": "B1",
+      "text_markup": "The files {{end up}} in the wrong folder. We must {{deal with}} that problem and {{figure out}} a safer workflow.",
+      "ja_translation": "ファイルが間違ったフォルダに入ってしまう。その問題に対処し、より安全な作業の流れを考え出す必要がある。",
+      "chunk_texts": ["end up", "deal with", "figure out"]
     }
   ],
   "B2": [
@@ -213,6 +283,41 @@
       "text_markup": "Investigators {{carried out}} a detailed review and {{drew up}} new guidelines. The changes should {{bring about}} clearer accountability across departments.",
       "ja_translation": "調査チームは詳細なレビューを行い、新しいガイドラインを作成した。変更は部門間でより明確な説明責任をもたらすはずだ。",
       "chunk_texts": ["carried out", "drew up", "bring about"]
+    },
+    {
+      "passage_id": "ps_b2_11",
+      "cefr_band": "B2",
+      "text_markup": "The reform {{calls for}} clearer roles. Analysts must {{account for}} regional gaps and {{rule out}} options that add risk.",
+      "ja_translation": "改革にはより明確な役割分担が必要だ。アナリストは地域格差を説明し、リスクを増やす選択肢を排除しなければならない。",
+      "chunk_texts": ["call for", "account for", "rule out"]
+    },
+    {
+      "passage_id": "ps_b2_12",
+      "cefr_band": "B2",
+      "text_markup": "Delays often {{stem from}} weak handoffs. They can {{give rise to}} disputes when success {{hinges on}} one vendor.",
+      "ja_translation": "遅延は弱い引き継ぎから生じることが多い。成功が一つのベンダー次第のとき、紛争を引き起こす可能性がある。",
+      "chunk_texts": ["stem from", "give rise to", "hinge on"]
+    },
+    {
+      "passage_id": "ps_b2_13",
+      "cefr_band": "B2",
+      "text_markup": "Managers {{take for granted}} how long training takes. Results {{fall short of}} goals when teams fail to {{live up to}} the standard.",
+      "ja_translation": "管理者は研修に要する時間を当たり前だと思いがちだ。チームが基準に応えられなければ、結果は目標に届かない。",
+      "chunk_texts": ["take for granted", "fall short of", "live up to"]
+    },
+    {
+      "passage_id": "ps_b2_14",
+      "cefr_band": "B2",
+      "text_markup": "The argument {{boils down to}} cost versus speed. The choice {{calls for}} patience because quick wins often {{stem from}} luck.",
+      "ja_translation": "議論はコスト対スピードに帰結する。その選択には忍耐が必要だ。短期的な成功はしばしば運から生まれるからだ。",
+      "chunk_texts": ["boil down to", "call for", "stem from"]
+    },
+    {
+      "passage_id": "ps_b2_15",
+      "cefr_band": "B2",
+      "text_markup": "The survey {{points out}} gaps leaders have {{overlooked}} for years. Progress will {{fall short of}} hopes unless teams {{live up to}} their pledge.",
+      "ja_translation": "調査はリーダーが長年見落としてきた欠陥を指摘している。チームが誓約を果たさなければ、進展は期待に届かないだろう。",
+      "chunk_texts": ["points out", "overlooked", "fall short of", "live up to"]
     }
   ]
 }
