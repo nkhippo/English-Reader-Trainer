@@ -51,15 +51,19 @@ const MODEL_CRITIQUE = 'claude-haiku-4-5-20251001';
 const MODEL_ENRICH = 'claude-haiku-4-5-20251001';
 /** @deprecated Use MODEL_ENRICH / MODEL_PASSAGE / MODEL_CRITIQUE */
 const ANTHROPIC_MODEL = MODEL_ENRICH;
-/** Items per Claude call for ja/en enrichment batches (was 125; 5× → 625). */
-const ENRICH_BATCH_SIZE = 625;
+/** Items per Claude call — must finish one API round-trip within the GAS 6-min cap. */
+const ENRICH_BATCH_SIZE = 150;
 /** Output token budget — scale with batch size (Haiku 4.5 max output 64K). */
 const ENRICH_JA_MAX_TOKENS = 64000;
 const ENRICH_EN_MAX_TOKENS = 64000;
 /** Below this, enrich API failures are not split-retried. */
 const ENRICH_MIN_SPLIT_SIZE = 50;
-/** Stop batching slightly before the 6-min GAS limit and chain a trigger. */
-const ENRICH_MAX_RUNTIME_MS = 5.5 * 60 * 1000;
+/** Soft stop for the enrich loop (leave headroom before the 6-min hard limit). */
+const ENRICH_SOFT_LIMIT_MS = 4.5 * 60 * 1000;
+/** Do not start another Claude batch unless this much runtime remains. */
+const ENRICH_BATCH_RESERVE_MS = 2.5 * 60 * 1000;
+/** Safety trigger if a single batch still hits the hard 6-min timeout. */
+const ENRICH_SAFETY_CONTINUE_MS = 6.5 * 60 * 1000;
 const ENRICH_CONTINUE_DELAY_MS = 30 * 1000;
 const ENRICH_CONTINUE_HANDLER = 'enrichAllTranslationsContinue_';
 const ENRICH_EN_CONTINUE_HANDLER = 'enrichAllEnglishGlossesContinue_';
@@ -220,72 +224,117 @@ function stopEnrichAllTranslations() {
 }
 
 function enrichAllTranslationsRun_() {
-  const started = Date.now();
-  let totalProcessed = 0;
-  let batches = 0;
-  let last = { processed: 0, remaining: -1, done: false };
+  return runEnrichJob_({
+    logLabel: 'enrichAllTranslations',
+    continueHandler: ENRICH_CONTINUE_HANDLER,
+    clearTriggersFn: clearEnrichContinueTriggers_,
+    scheduleContinueFn: scheduleEnrichContinue_,
+    runBatchFn: () => enrichTranslationsBatch_(ENRICH_BATCH_SIZE),
+    countRemainingFn: countMissingTranslations_,
+  });
+}
 
-  while (Date.now() - started < ENRICH_MAX_RUNTIME_MS) {
-    try {
-      last = enrichTranslationsBatch_(ENRICH_BATCH_SIZE);
-    } catch (err) {
-      Logger.log('enrichTranslationsBatch_ failed: ' + err);
-      last = {
-        processed: 0,
-        remaining: countMissingTranslations_(),
-        done: false,
-      };
-      Utilities.sleep(2000);
-    }
-    totalProcessed += last.processed;
-    batches += 1;
+function canStartEnrichBatch_(startedAt) {
+  const elapsed = Date.now() - startedAt;
+  return elapsed + ENRICH_BATCH_RESERVE_MS <= ENRICH_SOFT_LIMIT_MS;
+}
 
-    if (last.remaining === 0) {
-      clearEnrichContinueTriggers_();
-      const result = {
-        processed: totalProcessed,
-        batches,
-        remaining: 0,
-        done: true,
-        continued: false,
-      };
-      Logger.log(JSON.stringify(result));
-      return result;
-    }
-
-    if (last.processed === 0) break;
-    Utilities.sleep(800);
+/** Shared enrich loop: multiple small batches per run, auto-continue via trigger. */
+function runEnrichJob_(opts) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    Logger.log(opts.logLabel + ': another run is active; skipping.');
+    return { skipped: true, remaining: opts.countRemainingFn() };
   }
 
-  const continued = last.remaining > 0;
-  if (continued) scheduleEnrichContinue_();
+  try {
+    scheduleEnrichSafetyContinue_(opts.continueHandler);
+    const started = Date.now();
+    let totalProcessed = 0;
+    let batches = 0;
+    let last = { processed: 0, remaining: -1, done: false };
 
-  const result = {
-    processed: totalProcessed,
-    batches,
-    remaining: last.remaining,
-    done: !continued,
-    continued,
-    next_run_in_sec: continued ? ENRICH_CONTINUE_DELAY_MS / 1000 : 0,
-  };
-  Logger.log(JSON.stringify(result));
-  return result;
+    while (Date.now() - started < ENRICH_SOFT_LIMIT_MS) {
+      if (!canStartEnrichBatch_(started)) {
+        Logger.log(opts.logLabel + ': stopping before next batch (runtime headroom)');
+        break;
+      }
+
+      try {
+        last = opts.runBatchFn();
+      } catch (err) {
+        Logger.log(opts.logLabel + ' batch failed: ' + err);
+        last = {
+          processed: 0,
+          remaining: opts.countRemainingFn(),
+          done: false,
+        };
+        Utilities.sleep(2000);
+      }
+      totalProcessed += last.processed;
+      batches += 1;
+
+      if (last.remaining === 0) {
+        opts.clearTriggersFn();
+        const result = {
+          processed: totalProcessed,
+          batches,
+          remaining: 0,
+          done: true,
+          continued: false,
+        };
+        Logger.log(JSON.stringify(result));
+        return result;
+      }
+
+      if (last.processed === 0) break;
+      Utilities.sleep(800);
+    }
+
+    const continued = last.remaining > 0;
+    if (continued) opts.scheduleContinueFn();
+
+    const result = {
+      processed: totalProcessed,
+      batches,
+      remaining: last.remaining,
+      done: !continued,
+      continued,
+      next_run_in_sec: continued ? ENRICH_CONTINUE_DELAY_MS / 1000 : 0,
+    };
+    Logger.log(JSON.stringify(result));
+    return result;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function scheduleEnrichContinue_() {
-  clearEnrichContinueTriggers_();
-  ScriptApp.newTrigger(ENRICH_CONTINUE_HANDLER)
+  scheduleEnrichDelayedContinue_(ENRICH_CONTINUE_HANDLER, ENRICH_CONTINUE_DELAY_MS);
+}
+
+function scheduleEnrichSafetyContinue_(handler) {
+  scheduleEnrichDelayedContinue_(handler, ENRICH_SAFETY_CONTINUE_MS);
+}
+
+function scheduleEnrichDelayedContinue_(handler, delayMs) {
+  clearEnrichTriggersForHandler_(handler);
+  ScriptApp.newTrigger(handler)
     .timeBased()
-    .after(ENRICH_CONTINUE_DELAY_MS)
+    .after(delayMs)
     .create();
 }
 
-function clearEnrichContinueTriggers_() {
+function clearEnrichTriggersForHandler_(handler) {
   ScriptApp.getProjectTriggers().forEach((trigger) => {
-    if (trigger.getHandlerFunction() === ENRICH_CONTINUE_HANDLER) {
+    if (trigger.getHandlerFunction() === handler) {
       ScriptApp.deleteTrigger(trigger);
     }
   });
+}
+
+function clearEnrichContinueTriggers_() {
+  clearEnrichTriggersForHandler_(ENRICH_CONTINUE_HANDLER);
 }
 
 /** Manual: report ja_translation coverage on chunks_master. */
@@ -568,72 +617,22 @@ function stopEnrichAllEnglishGlosses() {
 }
 
 function enrichAllEnglishGlossesRun_() {
-  const started = Date.now();
-  let totalProcessed = 0;
-  let batches = 0;
-  let last = { processed: 0, remaining: -1, done: false };
-
-  while (Date.now() - started < ENRICH_MAX_RUNTIME_MS) {
-    try {
-      last = enrichEnglishGlossesBatch_(ENRICH_BATCH_SIZE);
-    } catch (err) {
-      Logger.log('enrichEnglishGlossesBatch_ failed: ' + err);
-      last = {
-        processed: 0,
-        remaining: countMissingEnglishGlosses_(),
-        done: false,
-      };
-      Utilities.sleep(2000);
-    }
-    totalProcessed += last.processed;
-    batches += 1;
-
-    if (last.remaining === 0) {
-      clearEnrichEnglishContinueTriggers_();
-      const result = {
-        processed: totalProcessed,
-        batches,
-        remaining: 0,
-        done: true,
-        continued: false,
-      };
-      Logger.log(JSON.stringify(result));
-      return result;
-    }
-
-    if (last.processed === 0) break;
-    Utilities.sleep(800);
-  }
-
-  const continued = last.remaining > 0;
-  if (continued) scheduleEnrichEnglishContinue_();
-
-  const result = {
-    processed: totalProcessed,
-    batches,
-    remaining: last.remaining,
-    done: !continued,
-    continued,
-    next_run_in_sec: continued ? ENRICH_CONTINUE_DELAY_MS / 1000 : 0,
-  };
-  Logger.log(JSON.stringify(result));
-  return result;
+  return runEnrichJob_({
+    logLabel: 'enrichAllEnglishGlosses',
+    continueHandler: ENRICH_EN_CONTINUE_HANDLER,
+    clearTriggersFn: clearEnrichEnglishContinueTriggers_,
+    scheduleContinueFn: scheduleEnrichEnglishContinue_,
+    runBatchFn: () => enrichEnglishGlossesBatch_(ENRICH_BATCH_SIZE),
+    countRemainingFn: countMissingEnglishGlosses_,
+  });
 }
 
 function scheduleEnrichEnglishContinue_() {
-  clearEnrichEnglishContinueTriggers_();
-  ScriptApp.newTrigger(ENRICH_EN_CONTINUE_HANDLER)
-    .timeBased()
-    .after(ENRICH_CONTINUE_DELAY_MS)
-    .create();
+  scheduleEnrichDelayedContinue_(ENRICH_EN_CONTINUE_HANDLER, ENRICH_CONTINUE_DELAY_MS);
 }
 
 function clearEnrichEnglishContinueTriggers_() {
-  ScriptApp.getProjectTriggers().forEach((trigger) => {
-    if (trigger.getHandlerFunction() === ENRICH_EN_CONTINUE_HANDLER) {
-      ScriptApp.deleteTrigger(trigger);
-    }
-  });
+  clearEnrichTriggersForHandler_(ENRICH_EN_CONTINUE_HANDLER);
 }
 
 /** Manual: report en_translation coverage on chunks_master. */
