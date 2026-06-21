@@ -55,7 +55,9 @@ const ANTHROPIC_MODEL = MODEL_ENRICH;
 const ENRICH_BATCH_SIZE = 625;
 /** Output token budget — scale with batch size (Haiku 4.5 max output 64K). */
 const ENRICH_JA_MAX_TOKENS = 64000;
-const ENRICH_EN_MAX_TOKENS = 32000;
+const ENRICH_EN_MAX_TOKENS = 64000;
+/** Below this, enrich API failures are not split-retried. */
+const ENRICH_MIN_SPLIT_SIZE = 50;
 /** Stop batching slightly before the 6-min GAS limit and chain a trigger. */
 const ENRICH_MAX_RUNTIME_MS = 5.5 * 60 * 1000;
 const ENRICH_CONTINUE_DELAY_MS = 30 * 1000;
@@ -333,34 +335,35 @@ function enrichTranslationsBatch_(batchSize) {
   return { processed: enriched.length, remaining, done: remaining === 0 };
 }
 
-function callClaudeEnrich_(items, apiKey) {
-  const input = items.map((i) => ({
-    chunk_id: i.chunk_id,
-    text: i.text,
-    type: i.type,
-    example_sentence: i.example_sentence || null,
-  }));
+/** Extract the first complete JSON array from Claude text (ignores trailing prose / fences). */
+function extractJsonArrayFromText_(text) {
+  let s = String(text || '').trim();
+  s = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```[\s\S]*$/, '');
+  const start = s.indexOf('[');
+  if (start < 0) throw new Error('No JSON array in Claude response');
 
-  const payload = {
-    model: MODEL_ENRICH,
-    max_tokens: ENRICH_JA_MAX_TOKENS,
-    messages: [{
-      role: 'user',
-      content: `You are a bilingual English–Japanese lexicographer creating entries for a chunk-learning app. For each item, provide:
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s.charAt(i);
+    if (inString) {
+      if (escape) { escape = false; continue; }
+      if (c === '\\') { escape = true; continue; }
+      if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') { inString = true; continue; }
+    if (c === '[') depth++;
+    else if (c === ']') {
+      depth--;
+      if (depth === 0) return JSON.parse(s.slice(start, i + 1));
+    }
+  }
+  throw new Error('Truncated JSON array — reduce ENRICH_BATCH_SIZE or raise max_tokens');
+}
 
-- ja_translation: the CORE meaning in concise, natural Japanese. Capture the functional nucleus of the chunk, not a word-by-word gloss. If the chunk is polysemous, give the SINGLE most frequent sense only (the app stores one sense per chunk). Use 〜 to mark where words attach (e.g. "〜を引き受ける", "〜のおかげで").
-- example_sentence: keep the existing one if it is provided and good; otherwise write ONE natural, CONCRETE sentence (8–18 words) showing the chunk in its most typical context — a specific situation the learner can picture, never a generic statement.
-
-Keep the Japanese clear and natural for a general adult learner (avoid overly literary vocabulary).
-
-Return ONLY a JSON array, no markdown:
-[{"chunk_id":"...","ja_translation":"...","example_sentence":"..."}]
-
-Items:
-${JSON.stringify(input)}`,
-    }],
-  };
-
+function fetchAnthropicEnrichArray_(payload, apiKey) {
   const res = UrlFetchApp.fetch(ANTHROPIC_API_URL, {
     method: 'post',
     contentType: 'application/json',
@@ -377,9 +380,54 @@ ${JSON.stringify(input)}`,
   }
 
   const body = JSON.parse(res.getContentText());
-  const text = body.content[0].text.trim();
-  const jsonStr = text.replace(/^```json?\s*/i, '').replace(/```\s*$/, '');
-  return JSON.parse(jsonStr);
+  if (!body.content || !body.content.length) throw new Error('Empty Claude response');
+  if (body.stop_reason === 'max_tokens') {
+    Logger.log('Warning: enrich response hit max_tokens (may be truncated)');
+  }
+  return extractJsonArrayFromText_(body.content[0].text);
+}
+
+function callClaudeEnrichWithSplitRetry_(items, apiKey, buildPayload) {
+  try {
+    return fetchAnthropicEnrichArray_(buildPayload(items), apiKey);
+  } catch (err) {
+    if (items.length <= ENRICH_MIN_SPLIT_SIZE) throw err;
+    Logger.log('Enrich batch failed — retrying as two halves: ' + err);
+    const mid = Math.ceil(items.length / 2);
+    return callClaudeEnrichWithSplitRetry_(items.slice(0, mid), apiKey, buildPayload)
+      .concat(callClaudeEnrichWithSplitRetry_(items.slice(mid), apiKey, buildPayload));
+  }
+}
+
+function callClaudeEnrich_(items, apiKey) {
+  return callClaudeEnrichWithSplitRetry_(items, apiKey, (batch) => {
+  const input = batch.map((i) => ({
+    chunk_id: i.chunk_id,
+    text: i.text,
+    type: i.type,
+    example_sentence: i.example_sentence || null,
+  }));
+
+  return {
+    model: MODEL_ENRICH,
+    max_tokens: ENRICH_JA_MAX_TOKENS,
+    messages: [{
+      role: 'user',
+      content: `You are a bilingual English–Japanese lexicographer creating entries for a chunk-learning app. For each item, provide:
+
+- ja_translation: the CORE meaning in concise, natural Japanese. Capture the functional nucleus of the chunk, not a word-by-word gloss. If the chunk is polysemous, give the SINGLE most frequent sense only (the app stores one sense per chunk). Use 〜 to mark where words attach (e.g. "〜を引き受ける", "〜のおかげで").
+- example_sentence: keep the existing one if it is provided and good; otherwise write ONE natural, CONCRETE sentence (8–18 words) showing the chunk in its most typical context — a specific situation the learner can picture, never a generic statement.
+
+Keep the Japanese clear and natural for a general adult learner (avoid overly literary vocabulary).
+
+Return ONLY a JSON array, no markdown, no commentary before or after:
+[{"chunk_id":"...","ja_translation":"...","example_sentence":"..."}]
+
+Items:
+${JSON.stringify(input)}`,
+    }],
+  };
+  });
 }
 
 function countMissingTranslations_() {
@@ -555,7 +603,8 @@ function enrichEnglishGlossesBatch_(batchSize) {
 }
 
 function callClaudeEnrichEnglish_(items, apiKey) {
-  const input = items.map((i) => ({
+  return callClaudeEnrichWithSplitRetry_(items, apiKey, (batch) => {
+  const input = batch.map((i) => ({
     chunk_id: i.chunk_id,
     text: i.text,
     type: i.type,
@@ -563,7 +612,7 @@ function callClaudeEnrichEnglish_(items, apiKey) {
     ja_translation: i.ja_translation || null,
   }));
 
-  const payload = {
+  return {
     model: MODEL_ENRICH,
     max_tokens: ENRICH_EN_MAX_TOKENS,
     messages: [{
@@ -583,33 +632,14 @@ Rules the gloss MUST follow:
 
 If ja_translation is provided, use it only as private context for picking the right sense. Write the gloss in English only.
 
-Return ONLY a JSON array, no markdown:
+Return ONLY a JSON array, no markdown, no commentary before or after:
 [{"chunk_id":"...","en_translation":"..."}]
 
 Items:
 ${JSON.stringify(input)}`,
     }],
   };
-
-  const res = UrlFetchApp.fetch(ANTHROPIC_API_URL, {
-    method: 'post',
-    contentType: 'application/json',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    payload: JSON.stringify(payload),
-    muteHttpExceptions: true,
   });
-
-  if (res.getResponseCode() !== 200) {
-    throw new Error(`Anthropic ${res.getResponseCode()}: ${res.getContentText().slice(0, 400)}`);
-  }
-
-  const body = JSON.parse(res.getContentText());
-  const text = body.content[0].text.trim();
-  const jsonStr = text.replace(/^```json?\s*/i, '').replace(/```\s*$/, '');
-  return JSON.parse(jsonStr);
 }
 
 function countMissingEnglishGlosses_() {
