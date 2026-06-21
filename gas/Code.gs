@@ -226,7 +226,17 @@ function enrichAllTranslationsRun_() {
   let last = { processed: 0, remaining: -1, done: false };
 
   while (Date.now() - started < ENRICH_MAX_RUNTIME_MS) {
-    last = enrichTranslationsBatch_(ENRICH_BATCH_SIZE);
+    try {
+      last = enrichTranslationsBatch_(ENRICH_BATCH_SIZE);
+    } catch (err) {
+      Logger.log('enrichTranslationsBatch_ failed: ' + err);
+      last = {
+        processed: 0,
+        remaining: countMissingTranslations_(),
+        done: false,
+      };
+      Utilities.sleep(2000);
+    }
     totalProcessed += last.processed;
     batches += 1;
 
@@ -381,15 +391,18 @@ function fetchAnthropicEnrichArray_(payload, apiKey) {
 
   const body = JSON.parse(res.getContentText());
   if (!body.content || !body.content.length) throw new Error('Empty Claude response');
-  if (body.stop_reason === 'max_tokens') {
+  const stopReason = body.stop_reason || '';
+  if (stopReason === 'max_tokens') {
     Logger.log('Warning: enrich response hit max_tokens (may be truncated)');
   }
-  return extractJsonArrayFromText_(body.content[0].text);
+  const items = extractJsonArrayFromText_(body.content[0].text);
+  return { items, stopReason };
 }
 
 function callClaudeEnrichWithSplitRetry_(items, apiKey, buildPayload) {
   try {
-    return fetchAnthropicEnrichArray_(buildPayload(items), apiKey);
+    const result = fetchAnthropicEnrichArray_(buildPayload(items), apiKey);
+    return result.items;
   } catch (err) {
     if (items.length <= ENRICH_MIN_SPLIT_SIZE) throw err;
     Logger.log('Enrich batch failed — retrying as two halves: ' + err);
@@ -399,8 +412,31 @@ function callClaudeEnrichWithSplitRetry_(items, apiKey, buildPayload) {
   }
 }
 
-function callClaudeEnrich_(items, apiKey) {
-  return callClaudeEnrichWithSplitRetry_(items, apiKey, (batch) => {
+/** Fetch enrich results; retry any pending chunk_ids that were omitted from the response. */
+function fetchEnrichBatchResults_(pending, apiKey, buildPayload) {
+  let enriched = callClaudeEnrichWithSplitRetry_(pending, apiKey, buildPayload);
+  let attempts = 0;
+
+  while (attempts < 3) {
+    const got = {};
+    enriched.forEach((item) => {
+      if (item && item.chunk_id) got[item.chunk_id] = true;
+    });
+    const missing = pending.filter((p) => !got[p.chunk_id]);
+    if (missing.length === 0) break;
+
+    Logger.log('Enrich incomplete: got ' + enriched.length + '/' + pending.length
+      + ' — retrying ' + missing.length + ' missing items');
+    const more = callClaudeEnrichWithSplitRetry_(missing, apiKey, buildPayload);
+    if (!more.length) break;
+    enriched = enriched.concat(more);
+    attempts += 1;
+  }
+
+  return enriched;
+}
+
+function buildJaEnrichPayload_(batch) {
   const input = batch.map((i) => ({
     chunk_id: i.chunk_id,
     text: i.text,
@@ -427,7 +463,52 @@ Items:
 ${JSON.stringify(input)}`,
     }],
   };
-  });
+}
+
+function buildEnEnrichPayload_(batch) {
+  const input = batch.map((i) => ({
+    chunk_id: i.chunk_id,
+    text: i.text,
+    type: i.type,
+    cefr: i.cefr,
+    ja_translation: i.ja_translation || null,
+  }));
+
+  return {
+    model: MODEL_ENRICH,
+    max_tokens: ENRICH_EN_MAX_TOKENS,
+    messages: [{
+      role: 'user',
+      content: `You are writing English-in-English glosses for a chunk-learning app used by Japanese learners. The gloss's job is to let a learner understand the item's meaning WITHOUT translating to Japanese — building a direct English-to-meaning pathway. Optimize for "a learner reads this and instantly gets it."
+
+For each item, provide:
+
+- en_translation: a short English gloss (about 6–15 words) capturing the single most frequent sense.
+
+Rules the gloss MUST follow:
+1. SIMPLER THAN THE HEADWORD. Use only words that are clearly easier than the item itself — roughly one to two CEFR levels below it. A learner who needs this gloss does not know hard words, so the gloss must not contain any.
+2. NO CIRCULAR DEFINITION. Never use the headword or its derivatives in the gloss (do not gloss "manage" with "to manage to...").
+3. SHOW HOW IT IS USED, not just what it means. For phrasal verbs and collocations, include the typical object or situation so the learner sees the chunk in action — e.g. "pick up" → "to lift something from the ground, or collect a person"; "make a decision" → "to choose what to do after thinking".
+4. EVOKE A SITUATION. Prefer wording that brings a concrete action or scene to mind over an abstract dictionary phrase.
+5. ONE SENSE ONLY. If the item is polysemous, gloss only its most frequent sense.
+
+If ja_translation is provided, use it only as private context for picking the right sense. Write the gloss in English only.
+
+Return ONLY a JSON array, no markdown, no commentary before or after:
+[{"chunk_id":"...","en_translation":"..."}]
+
+Items:
+${JSON.stringify(input)}`,
+    }],
+  };
+}
+
+function callClaudeEnrich_(items, apiKey) {
+  return fetchEnrichBatchResults_(items, apiKey, buildJaEnrichPayload_);
+}
+
+function callClaudeEnrichEnglish_(items, apiKey) {
+  return fetchEnrichBatchResults_(items, apiKey, buildEnEnrichPayload_);
 }
 
 function countMissingTranslations_() {
@@ -493,7 +574,17 @@ function enrichAllEnglishGlossesRun_() {
   let last = { processed: 0, remaining: -1, done: false };
 
   while (Date.now() - started < ENRICH_MAX_RUNTIME_MS) {
-    last = enrichEnglishGlossesBatch_(ENRICH_BATCH_SIZE);
+    try {
+      last = enrichEnglishGlossesBatch_(ENRICH_BATCH_SIZE);
+    } catch (err) {
+      Logger.log('enrichEnglishGlossesBatch_ failed: ' + err);
+      last = {
+        processed: 0,
+        remaining: countMissingEnglishGlosses_(),
+        done: false,
+      };
+      Utilities.sleep(2000);
+    }
     totalProcessed += last.processed;
     batches += 1;
 
@@ -600,46 +691,6 @@ function enrichEnglishGlossesBatch_(batchSize) {
 
   const remaining = countMissingEnglishGlosses_();
   return { processed: enriched.length, remaining, done: remaining === 0 };
-}
-
-function callClaudeEnrichEnglish_(items, apiKey) {
-  return callClaudeEnrichWithSplitRetry_(items, apiKey, (batch) => {
-  const input = batch.map((i) => ({
-    chunk_id: i.chunk_id,
-    text: i.text,
-    type: i.type,
-    cefr: i.cefr,
-    ja_translation: i.ja_translation || null,
-  }));
-
-  return {
-    model: MODEL_ENRICH,
-    max_tokens: ENRICH_EN_MAX_TOKENS,
-    messages: [{
-      role: 'user',
-      content: `You are writing English-in-English glosses for a chunk-learning app used by Japanese learners. The gloss's job is to let a learner understand the item's meaning WITHOUT translating to Japanese — building a direct English-to-meaning pathway. Optimize for "a learner reads this and instantly gets it."
-
-For each item, provide:
-
-- en_translation: a short English gloss (about 6–15 words) capturing the single most frequent sense.
-
-Rules the gloss MUST follow:
-1. SIMPLER THAN THE HEADWORD. Use only words that are clearly easier than the item itself — roughly one to two CEFR levels below it. A learner who needs this gloss does not know hard words, so the gloss must not contain any.
-2. NO CIRCULAR DEFINITION. Never use the headword or its derivatives in the gloss (do not gloss "manage" with "to manage to...").
-3. SHOW HOW IT IS USED, not just what it means. For phrasal verbs and collocations, include the typical object or situation so the learner sees the chunk in action — e.g. "pick up" → "to lift something from the ground, or collect a person"; "make a decision" → "to choose what to do after thinking".
-4. EVOKE A SITUATION. Prefer wording that brings a concrete action or scene to mind over an abstract dictionary phrase.
-5. ONE SENSE ONLY. If the item is polysemous, gloss only its most frequent sense.
-
-If ja_translation is provided, use it only as private context for picking the right sense. Write the gloss in English only.
-
-Return ONLY a JSON array, no markdown, no commentary before or after:
-[{"chunk_id":"...","en_translation":"..."}]
-
-Items:
-${JSON.stringify(input)}`,
-    }],
-  };
-  });
 }
 
 function countMissingEnglishGlosses_() {
