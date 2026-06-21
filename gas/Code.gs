@@ -51,11 +51,11 @@ const MODEL_CRITIQUE = 'claude-haiku-4-5-20251001';
 const MODEL_ENRICH = 'claude-haiku-4-5-20251001';
 /** @deprecated Use MODEL_ENRICH / MODEL_PASSAGE / MODEL_CRITIQUE */
 const ANTHROPIC_MODEL = MODEL_ENRICH;
-/** Items per Claude call for ja/en enrichment batches (was 25). */
-const ENRICH_BATCH_SIZE = 125;
-/** Output token budget — scale with batch size to avoid truncated JSON. */
-const ENRICH_JA_MAX_TOKENS = 16384;
-const ENRICH_EN_MAX_TOKENS = 8192;
+/** Items per Claude call for ja/en enrichment batches (was 125; 5× → 625). */
+const ENRICH_BATCH_SIZE = 625;
+/** Output token budget — scale with batch size (Haiku 4.5 max output 64K). */
+const ENRICH_JA_MAX_TOKENS = 64000;
+const ENRICH_EN_MAX_TOKENS = 32000;
 /** Stop batching slightly before the 6-min GAS limit and chain a trigger. */
 const ENRICH_MAX_RUNTIME_MS = 5.5 * 60 * 1000;
 const ENRICH_CONTINUE_DELAY_MS = 30 * 1000;

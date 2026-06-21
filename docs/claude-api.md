@@ -58,8 +58,8 @@ const MODEL_ENRICH   = 'claude-haiku-4-5-20251001';
 |------|------|------------|--------|
 | 動的パッセージ生成 | `MODEL_PASSAGE` | 4,096 | 1 本/回（最大 3 リトライ） |
 | 品質 critique | `MODEL_CRITIQUE` | 2,048 | 1 本/回 |
-| 日本語訳 enrich | `MODEL_ENRICH` | 16,384 | 125 件/回 |
-| 英語グロス enrich | `MODEL_ENRICH` | 8,192 | 125 件/回 |
+| 日本語訳 enrich | `MODEL_ENRICH` | 64,000 | 625 件/回 |
+| 英語グロス enrich | `MODEL_ENRICH` | 32,000 | 625 件/回 |
 
 - エンドポイント: `https://api.anthropic.com/v1/messages`
 - API バージョン: `anthropic-version: 2023-06-01`
@@ -269,7 +269,7 @@ Items: ${JSON.stringify(input)}
 | 関数 | 用途 |
 |------|------|
 | `preparePromptRenewalRefresh()` | ja/en/example 全クリア + passages キャッシュ削除 + critique 列追加 |
-| `enrichAllTranslations()` | ja + example_sentence バッチ（125 件/回、自動継続） |
+| `enrichAllTranslations()` | ja + example_sentence バッチ（625 件/回、自動継続） |
 | `enrichAllEnglishGlosses()` | en バッチ（ja 完走後） |
 | `auditTranslationCoverage()` | ja カバレッジ確認 |
 | `auditEnglishGlossCoverage()` | en カバレッジ確認 |
