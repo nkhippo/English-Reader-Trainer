@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { logEncounter } from '../lib/api.js';
 import { CLOZE_PROBABILITY, READING_TIME_LIMIT_SEC, USER_ID } from '../lib/config.js';
 
 const READING_TIME_LIMIT_MS = READING_TIME_LIMIT_SEC * 1000;
 const TRANSITION_MS = 200;
 const ACTION_LOCK_TIMEOUT_MS = 12000;
+/** Keep processing UI visible long enough to notice (avoids sub-frame flash). */
+const MIN_PROCESSING_MS = 400;
 
 export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePastEnd } = {}) {
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -29,6 +32,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   const passagesKeyRef = useRef('');
   const actionPendingRef = useRef(false);
   const actionLockTimerRef = useRef(null);
+  const actionStartedAtRef = useRef(0);
   const pauseAfterActionRef = useRef(false);
   const [pauseAfterAction, setPauseAfterAction] = useState(false);
   const passiveFiredRef = useRef(false);
@@ -191,8 +195,11 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     if (actionPendingRef.current) return false;
     if (!passage?.id) return false;
     actionPendingRef.current = true;
-    setActionsDisabled(true);
-    setIsSaving(true);
+    actionStartedAtRef.current = Date.now();
+    flushSync(() => {
+      setActionsDisabled(true);
+      setIsSaving(true);
+    });
     clearTimeout(actionLockTimerRef.current);
     actionLockTimerRef.current = setTimeout(() => {
       console.warn('[ERT] action lock timed out — releasing overlay');
@@ -271,6 +278,10 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       } finally {
         pauseAfterActionRef.current = false;
         setPauseAfterAction(false);
+        const waitMs = MIN_PROCESSING_MS - (Date.now() - actionStartedAtRef.current);
+        if (waitMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+        }
         releaseActionLock();
       }
     },

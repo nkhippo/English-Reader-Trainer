@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from 'react';
 import { useI18n } from '../i18n/I18nProvider.jsx';
 
 export function Footer({
@@ -11,7 +12,19 @@ export function Footer({
   suspendQueued,
 }) {
   const { t } = useI18n();
-  const footerClass = isProcessing ? 'footer footer--processing' : 'footer';
+  const [optimisticProcessing, setOptimisticProcessing] = useState(false);
+  const showProcessing = isProcessing || optimisticProcessing;
+  const footerClass = showProcessing ? 'footer footer--processing' : 'footer';
+
+  useEffect(() => {
+    if (!isProcessing) setOptimisticProcessing(false);
+  }, [isProcessing]);
+
+  const handleGotIt = useCallback(() => {
+    if (actionsDisabled || optimisticProcessing) return;
+    setOptimisticProcessing(true);
+    void Promise.resolve(onGotIt());
+  }, [actionsDisabled, onGotIt, optimisticProcessing]);
 
   return (
     <footer className={footerClass}>
@@ -19,7 +32,7 @@ export function Footer({
         <button
           className={`btn btn--ghost ${hardFlash ? 'btn--hard-flash' : ''}`}
           onClick={onStillHard}
-          disabled={actionsDisabled}
+          disabled={actionsDisabled || showProcessing}
         >
           ⊘ {t.stillHard}
         </button>
@@ -37,12 +50,12 @@ export function Footer({
       <div className="footer__right">
         <button
           type="button"
-          className={`btn btn--primary ${isProcessing ? 'btn--processing' : ''}`}
-          onClick={onGotIt}
-          disabled={actionsDisabled}
-          aria-busy={isProcessing || undefined}
+          className={`btn btn--primary ${showProcessing ? 'btn--processing' : ''}`}
+          onClick={handleGotIt}
+          disabled={actionsDisabled || optimisticProcessing}
+          aria-busy={showProcessing || undefined}
         >
-          {isProcessing ? (
+          {showProcessing ? (
             <>
               <span className="btn__spinner" aria-hidden="true" />
               {t.gotItProcessing}
