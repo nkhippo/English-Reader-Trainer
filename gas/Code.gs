@@ -1257,12 +1257,35 @@ const PASSAGE_SYSTEM_PROMPT_ = [
   '',
   '5. CONTEXTUAL VARIETY. You will be told how each chunk appeared in PREVIOUS passages. Make THIS passage genuinely different: a different scenario, different collocates, a different sentence structure. Reusing a prior context defeats the entire purpose of the app.',
   '',
-  '6. REGISTER BY CEFR BAND.',
-  '   - A1/A2: short concrete sentences; everyday scenes (home, shopping, travel, daily routine); present and past simple dominant.',
-  '   - B1: everyday plus light work and social topics; a wider range of connectors; some complex sentences; mix present, past, and past perfect.',
-  '   - B2: may include abstract or argumentative topics and a reporting register; richer cohesion; vary tense naturally.',
+  '6. REGISTER AND LINGUISTIC VARIETY BY CEFR BAND.',
   '',
-  '7. TENSE VARIETY. Learners must recognize chunks across tenses. When the user prompt specifies a past narrative frame, set the passage mainly in past simple and use past perfect where natural (e.g. "I had already… when…"). Conjugate each target chunk in the tense the sentence requires. Do not default every passage to present tense unless the scene truly calls for it.',
+  'Each band has a target distribution. Across many passages your output should hit these distributions on average. Within a single passage, prefer ONE or TWO tenses for coherence — but do not default to present simple every time.',
+  '',
+  'A1/A2:',
+  '- Topics: everyday concrete scenes (home, shopping, travel, daily routine, school).',
+  '- Tenses: present simple AND past simple, both common. Occasionally present continuous. Do not write only in present.',
+  '- Subjects: vary across I, you, he, she, we, they, and named people. About one third of passages should feature a third-person singular subject so the learner meets -s/-es marking.',
+  '- Voice: active only.',
+  '- Connectors: and, but, so, then, because, when.',
+  '',
+  'B1:',
+  '- Topics: everyday plus light work, study, and social topics.',
+  '- Tenses: present simple, past simple, present continuous, present perfect, past continuous all in play. Roughly half the passages should be in past time frames.',
+  '- Subjects: full range of persons; third-person singular routinely.',
+  '- Voice: mostly active; a simple passive may appear when natural (e.g. "the package was delivered").',
+  '- Connectors: also use although, while, since, however, as a result, in addition.',
+  '',
+  'B2:',
+  '- Topics: may include abstract, argumentative, or reporting register.',
+  '- Tenses: full range including past perfect, present perfect continuous, used to, conditional forms. Tense should serve the narrative, not avoid difficulty.',
+  '- Subjects: full range, including impersonal it / there constructions.',
+  '- Voice: active and passive both used naturally; report register may use passive ("it has been argued that ...").',
+  '- Connectors: full range of cohesive devices including despite, nevertheless, on the other hand, given that.',
+  '',
+  'ABSOLUTE RULES (all bands):',
+  '- Target chunks themselves are NEVER altered. If a chunk is "managed to", write "managed to" (or "I/he/she managed to", "had managed to" if natural) — never rewrite the chunk into a different form.',
+  '- Do not force a tense in just to display variety. Pick the tense that makes the scene most natural, but actively resist defaulting to present simple.',
+  '- Keep tense usage coherent WITHIN a passage (don\'t randomly flip tenses sentence by sentence).',
   '',
   'Output ONLY valid JSON (no markdown fences), in exactly this shape:',
   '{',
@@ -1276,6 +1299,7 @@ const PASSAGE_SYSTEM_PROMPT_ = [
   '    "surrounding_vocab_within_band": true,',
   '    "each_chunk_inferable_from_context": true,',
   '    "different_from_prior_contexts": true,',
+  '    "tense_appropriate_for_scene": true,',
   '    "notes": "one short sentence; flag any compromise you had to make"',
   '  }',
   '}',
@@ -1283,20 +1307,11 @@ const PASSAGE_SYSTEM_PROMPT_ = [
   'char_start and char_end are 0-based, end-exclusive indices into the "text" field.',
 ].join('\n');
 
-/** ~30% of generated passages use past simple / past perfect as the main narrative frame. */
-function pickPassageTenseHint_() {
-  if (Math.random() < 0.30) {
-    return 'Narrative tense: set this passage mainly in the PAST — use past simple and, where natural, past perfect (e.g. "I had already… when…"). Conjugate each target chunk in the tense the sentence requires.';
-  }
-  return 'Narrative tense: present simple is fine for everyday scenes; use other tenses when they fit the scenario naturally.';
-}
-
 function buildPassageUserPrompt_(chunks, band, index, revisionHint) {
   const cefrHint = band === 'A1A2' ? 'A1/A2' : band;
   const lines = [
     `CEFR band: ${cefrHint}`,
     'Length: 3 to 6 sentences, 60 to 120 words total.',
-    pickPassageTenseHint_(),
     '',
     'Target chunks (embed ALL of them, each at least once):',
     '',
@@ -1312,6 +1327,7 @@ function buildPassageUserPrompt_(chunks, band, index, revisionHint) {
       lines.push('    previously appeared as:');
       priors.forEach((snippet) => { lines.push(`      • ${snippet}`); });
       lines.push('    make this encounter clearly different from the above.');
+      if (priors.length > 1) lines.push('    if the prior contexts all share a tense or subject person, prefer a different one here.');
     } else {
       lines.push('    this is the learner\'s FIRST encounter — introduce it in an especially clear, self-explaining context.');
     }
@@ -1410,6 +1426,7 @@ function callClaudeCritiquePassage_(generated, chunks, band, index, apiKey) {
         '- inferability: each target chunk\'s meaning can be guessed from the surrounding context',
         '- chunk_integrity: every target chunk appears verbatim and is used correctly',
         '- variety: genuinely different scenario/collocates/structure from the prior contexts (score 2 if no prior contexts were given)',
+        '- linguistic_variety: tense/person/voice fit the scene and CEFR band; not a default present-simple I-narrator',
         '- concreteness: a vivid, specific situation rather than abstract filler',
         '- translation_fidelity: the Japanese is accurate and natural',
         '',
@@ -1421,6 +1438,7 @@ function callClaudeCritiquePassage_(generated, chunks, band, index, apiKey) {
         '    "inferability": 0,',
         '    "chunk_integrity": 0,',
         '    "variety": 0,',
+        '    "linguistic_variety": 0,',
         '    "concreteness": 0,',
         '    "translation_fidelity": 0',
         '  },',
@@ -1430,7 +1448,7 @@ function callClaudeCritiquePassage_(generated, chunks, band, index, apiKey) {
         '  "revision_hint": "one concrete instruction for regeneration, if verdict is revise"',
         '}',
         '',
-        'Pass threshold: total >= 11 AND no single criterion scores 0.',
+        'Pass threshold: total >= 13 AND no single criterion scores 0.',
       ].join('\n'),
     }],
   };
@@ -1442,14 +1460,14 @@ function critiquePasses_(critique) {
   if (!critique || !critique.scores) return false;
   const scores = critique.scores;
   const keys = ['naturalness', 'comprehensibility', 'inferability', 'chunk_integrity',
-    'variety', 'concreteness', 'translation_fidelity'];
+    'variety', 'linguistic_variety', 'concreteness', 'translation_fidelity'];
   let total = 0;
   for (let i = 0; i < keys.length; i++) {
     const s = Number(scores[keys[i]]);
     if (isNaN(s) || s <= 0) return false;
     total += s;
   }
-  if (total < 11) return false;
+  if (total < 13) return false;
   if (String(critique.verdict || '').toLowerCase() === 'revise') return false;
   return true;
 }
@@ -1510,6 +1528,7 @@ function validatePassageSelfCheck_(selfCheck) {
     'surrounding_vocab_within_band',
     'each_chunk_inferable_from_context',
     'different_from_prior_contexts',
+    'tense_appropriate_for_scene',
   ];
   for (let i = 0; i < flags.length; i++) {
     if (selfCheck[flags[i]] === false) return false;
@@ -1962,9 +1981,9 @@ function getPassageTemplatesInline_(band) {
       {
         passage_id: 'ps_a1_01',
         cefr_band: 'A1A2',
-        text_markup: 'Yesterday I walked into a small café near my house. I {{looked at}} the menu on the wall and {{picked up}} a cup of hot tea. There were {{a lot of}} people that day, but the waiter smiled and helped me find a seat.',
+        text_markup: 'Yesterday I walked into a small café near my house. I stopped to {{look at}} the menu on the wall and {{pick up}} a cup of hot tea. There were {{a lot of}} people that day, but the waiter smiled and helped me find a seat.',
         ja_translation: '昨日、家の近くの小さなカフェに入った。壁のメニューを見て、温かいお茶を手に取った。その日はたくさん人がいたが、ウェイターは笑顔で席を見つけるのを手伝ってくれた。',
-        chunk_texts: ['looked at', 'picked up', 'a lot of'],
+        chunk_texts: ['look at', 'pick up', 'a lot of'],
       },
       {
         passage_id: 'ps_a1_02',
@@ -1976,8 +1995,8 @@ function getPassageTemplatesInline_(band) {
       {
         passage_id: 'ps_a1_03',
         cefr_band: 'A1A2',
-        text_markup: 'It is late at night. I {{turn on}} the light in my room and {{sit down}} at my desk. I have {{a few}} books to read tonight. I want to finish them before I go to bed.',
-        ja_translation: '夜遅い。部屋の明かりをつけて、机に座る。今夜読む本が数冊ある。寝る前に読み終えたい。',
+        text_markup: 'It was late at night. I had already had dinner when I decided to {{turn on}} the light in my room and {{sit down}} at my desk. I still had {{a few}} books I wanted to finish before bed.',
+        ja_translation: '夜遅かった。すでに夕食を済ませたあと、部屋の明かりをつけて机に座った。寝る前に読み終えたい本がまだ数冊あった。',
         chunk_texts: ['turn on', 'sit down', 'a few'],
       },
     ],
