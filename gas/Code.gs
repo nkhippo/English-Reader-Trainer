@@ -709,6 +709,11 @@ function countMissingEnglishGlosses_() {
 /** Days until next encounter by SRS stage (index = stage). */
 const SRS_INTERVAL_DAYS = [0, 1, 3, 7, 14, 30];
 
+/** Graduation requires active got_it signals across time and contexts — not passive timer alone. */
+const GRADUATION_MIN_GOT_IT = 6;
+const GRADUATION_MIN_DISTINCT_PASSAGES = 5;
+const GRADUATION_MIN_SPAN_DAYS = 3;
+
 function computeNextDueAt_(stage) {
   const days = SRS_INTERVAL_DAYS[Math.min(Math.max(stage, 0), 5)];
   const d = new Date();
@@ -733,11 +738,30 @@ function computeNextDueAfterSignal_(stage, signal, existingNextDue) {
   return computeNextDueAt_(stage);
 }
 
-function shouldGraduate_(prog) {
-  if (prog.encounter_count < 5) return false;
-  if (prog.distinct_passages_count < 3) return false;
-  if (prog.encounter_count === 0) return false;
-  return prog.still_hard_count / prog.encounter_count < 0.3;
+function shouldGraduate_(prog, userId, chunkId) {
+  const gotIt = prog.got_it_count || 0;
+  if (gotIt < GRADUATION_MIN_GOT_IT) return false;
+  if (prog.distinct_passages_count < GRADUATION_MIN_DISTINCT_PASSAGES) return false;
+  if (gotIt === 0) return false;
+  if (prog.still_hard_count / gotIt >= 0.3) return false;
+  const firstAt = getFirstEncounteredAt_(userId, chunkId);
+  if (!firstAt) return false;
+  const spanDays = (Date.now() - firstAt.getTime()) / 86400000;
+  return spanDays >= GRADUATION_MIN_SPAN_DAYS;
+}
+
+function getFirstEncounteredAt_(userId, chunkId) {
+  const sheet = getSheet_(SHEET_NAMES.ENCOUNTERS);
+  if (sheet.getLastRow() < 2) return null;
+  const data = sheet.getDataRange().getValues();
+  let earliest = null;
+  for (let r = 1; r < data.length; r++) {
+    if (data[r][1] !== userId || data[r][2] !== chunkId) continue;
+    const readAt = new Date(data[r][4]);
+    if (isNaN(readAt.getTime())) continue;
+    if (!earliest || readAt < earliest) earliest = readAt;
+  }
+  return earliest;
 }
 
 function deriveStatus_(stage, graduated, encounterCount) {
@@ -785,6 +809,16 @@ function buildExcludeChunkMap_(userId, clientIds) {
   const exclude = {};
   getRecentChunkIds_(userId, RECENT_CHUNK_HOURS).forEach((id) => { exclude[id] = true; });
   (clientIds || []).forEach((id) => { if (id) exclude[id] = true; });
+  return exclude;
+}
+
+/** For template scoring: also treat not-yet-due progress chunks as excluded. */
+function buildTemplateExcludeMap_(userId, clientIds, progressMap, now) {
+  const exclude = buildExcludeChunkMap_(userId, clientIds);
+  Object.keys(progressMap || {}).forEach((chunkId) => {
+    const prog = progressMap[chunkId];
+    if (prog && !isDue_(prog.next_due_at, now)) exclude[chunkId] = true;
+  });
   return exclude;
 }
 
@@ -901,10 +935,11 @@ function updateProgressForChunk_(userId, chunkId, passageId, signal) {
 
   const progSnapshot = {
     encounter_count,
+    got_it_count,
     distinct_passages_count: distinctPassages,
     still_hard_count,
   };
-  const graduated = shouldGraduate_(progSnapshot);
+  const graduated = shouldGraduate_(progSnapshot, userId, chunkId);
   const status = deriveStatus_(srs_stage, graduated, encounter_count);
 
   const row = [
@@ -969,9 +1004,9 @@ function handleDueChunks_(body) {
 
   Object.values(index).forEach((chunk) => {
     if (!chunkInSrsScope_(chunk.cefr, band)) return;
-    if (excludeMap[chunk.chunk_id]) return;
     const prog = progressMap[chunk.chunk_id];
     if (!prog) {
+      if (excludeMap[chunk.chunk_id]) return;
       newChunks.push({
         chunk_id: chunk.chunk_id,
         text: chunk.text,
@@ -980,17 +1015,18 @@ function handleDueChunks_(body) {
       });
       return;
     }
-    if (isDue_(prog.next_due_at, now)) {
-      due.push({
-        chunk_id: chunk.chunk_id,
-        text: chunk.text,
-        cefr: chunk.cefr,
-        srs_stage: prog.srs_stage,
-        last_encountered_at: prog.last_encountered_at,
-        status: prog.status,
-        still_hard_count: prog.still_hard_count,
-      });
-    }
+    // SRS gate: in-progress chunks appear only when formally due.
+    if (!isDue_(prog.next_due_at, now)) return;
+    if (excludeMap[chunk.chunk_id]) return;
+    due.push({
+      chunk_id: chunk.chunk_id,
+      text: chunk.text,
+      cefr: chunk.cefr,
+      srs_stage: prog.srs_stage,
+      last_encountered_at: prog.last_encountered_at,
+      status: prog.status,
+      still_hard_count: prog.still_hard_count,
+    });
   });
 
   due.sort((a, b) => (b.still_hard_count || 0) - (a.still_hard_count || 0));
@@ -1000,9 +1036,6 @@ function handleDueChunks_(body) {
 
   if (dueOut.length === 0) {
     dueOut = collectMaintenanceDueChunks_(index, progressMap, band, now, limit, excludeMap);
-  }
-  if (dueOut.length === 0) {
-    dueOut = collectSessionReviewChunks_(index, progressMap, band, now, limit, excludeMap);
   }
 
   const orderedNew = orderNewChunksForBand_(newChunks, band);
@@ -1023,7 +1056,8 @@ function collectMaintenanceDueChunks_(index, progressMap, band, now, limit, excl
     if (!chunkInSrsScope_(chunk.cefr, band)) return;
     if (excludeMap && excludeMap[chunk.chunk_id]) return;
     const prog = progressMap[chunk.chunk_id];
-    if (!prog || isDue_(prog.next_due_at, now)) return;
+    if (!prog || prog.status !== 'graduated') return;
+    if (isDue_(prog.next_due_at, now)) return;
     const lastMs = new Date(prog.last_encountered_at).getTime();
     if (isNaN(lastMs) || lastMs > cutoff) return;
     candidates.push({ chunk, prog, lastMs });
@@ -1041,35 +1075,6 @@ function collectMaintenanceDueChunks_(index, progressMap, band, now, limit, excl
     status: prog.status,
     still_hard_count: prog.still_hard_count,
     maintenance: true,
-  }));
-}
-
-/** Same-day rotation through in-progress chunks when nothing is formally due yet. */
-function collectSessionReviewChunks_(index, progressMap, band, now, limit, excludeMap) {
-  const candidates = [];
-
-  Object.values(index).forEach((chunk) => {
-    if (!chunkInSrsScope_(chunk.cefr, band)) return;
-    if (excludeMap && excludeMap[chunk.chunk_id]) return;
-    const prog = progressMap[chunk.chunk_id];
-    if (!prog || isDue_(prog.next_due_at, now)) return;
-    const lastMs = new Date(prog.last_encountered_at).getTime();
-    if (isNaN(lastMs)) return;
-    candidates.push({ chunk, prog, lastMs });
-  });
-
-  candidates.sort((a, b) => a.lastMs - b.lastMs);
-  shuffleArrayInPlace_(candidates);
-
-  return candidates.slice(0, limit).map(({ chunk, prog }) => ({
-    chunk_id: chunk.chunk_id,
-    text: chunk.text,
-    cefr: chunk.cefr,
-    srs_stage: prog.srs_stage,
-    last_encountered_at: prog.last_encountered_at,
-    status: prog.status,
-    still_hard_count: prog.still_hard_count,
-    session_review: true,
   }));
 }
 
@@ -1117,10 +1122,11 @@ function getPassageMode_() {
 }
 
 function buildPassageForUser_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds) {
-  const excludeMap = buildExcludeChunkMap_(userId, excludeChunkIds);
+  const now = new Date();
+  const templateExcludeMap = buildTemplateExcludeMap_(userId, excludeChunkIds, progressMap, now);
   const mode = getPassageMode_();
   if (mode === 'template') {
-    return pickTemplatePassage_(band, index, progressMap, excludePassageIds, excludeMap);
+    return pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap);
   }
 
   const dueData = handleDueChunks_({
@@ -1129,7 +1135,7 @@ function buildPassageForUser_(userId, band, index, progressMap, excludePassageId
     limit: 20,
     exclude_chunk_ids: excludeChunkIds,
   });
-  const chunks = selectChunksForPassage_(dueData, progressMap, index, band, excludeMap);
+  const chunks = selectChunksForPassage_(dueData, progressMap, index, band, templateExcludeMap);
 
   if (mode === 'hybrid') {
     if (chunks.length >= 2) {
@@ -1137,7 +1143,7 @@ function buildPassageForUser_(userId, band, index, progressMap, excludePassageId
       const cached = findCachedPassage_(cacheKey, index, band, progressMap, excludePassageIds);
       if (cached) return cached;
 
-      const tpl = pickTemplateCoveringChunks_(band, index, progressMap, excludePassageIds, chunks, excludeMap);
+      const tpl = pickTemplateCoveringChunks_(band, index, progressMap, excludePassageIds, chunks, templateExcludeMap);
       if (tpl) return tpl;
     }
 
@@ -1149,7 +1155,7 @@ function buildPassageForUser_(userId, band, index, progressMap, excludePassageId
       }
     }
 
-    return pickTemplatePassage_(band, index, progressMap, excludePassageIds, excludeMap);
+    return pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap);
   }
 
   try {
@@ -1157,7 +1163,7 @@ function buildPassageForUser_(userId, band, index, progressMap, excludePassageId
   } catch (err) {
     Logger.log('Dynamic passage failed, using template: ' + err);
   }
-  return pickTemplatePassage_(band, index, progressMap, excludePassageIds, excludeMap);
+  return pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap);
 }
 
 function isDynamicPassagesEnabled_() {
@@ -1209,7 +1215,7 @@ function needsNewPassageContext_(chunks, progressMap) {
 function generateDynamicPassageClaude_(userId, band, index, progressMap, excludePassageIds, chunks, excludeChunkIds) {
   const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
-  const excludeMap = buildExcludeChunkMap_(userId, excludeChunkIds);
+  const excludeMap = buildTemplateExcludeMap_(userId, excludeChunkIds, progressMap, new Date());
   if (!chunks || chunks.length < 2) {
     chunks = selectChunksForPassage_(
       handleDueChunks_({ user_id: userId, cefr: band, limit: 20, exclude_chunk_ids: excludeChunkIds }),
@@ -1287,33 +1293,17 @@ function selectChunksForPassage_(dueData, progressMap, index, band, excludeMap) 
     });
   }
 
-  const preferDueFirst = due.some((c) => c.session_review || c.maintenance);
+  if (newChunks.length) add(newChunks[0]);
 
-  if (preferDueFirst) {
-    due.filter((c) => {
-      const prog = progressMap[c.chunk_id];
-      return prog && prog.srs_stage >= 1 && prog.srs_stage <= 3;
-    }).slice(0, 2).forEach(add);
+  due.filter((c) => {
+    const prog = progressMap[c.chunk_id];
+    return prog && prog.srs_stage >= 1 && prog.srs_stage <= 3;
+  }).slice(0, 2).forEach(add);
 
-    due.filter((c) => {
-      const prog = progressMap[c.chunk_id];
-      return prog && prog.srs_stage >= 4;
-    }).slice(0, 1).forEach(add);
-
-    if (selected.length < 2 && newChunks.length) add(newChunks[0]);
-  } else {
-    if (newChunks.length) add(newChunks[0]);
-
-    due.filter((c) => {
-      const prog = progressMap[c.chunk_id];
-      return prog && prog.srs_stage >= 1 && prog.srs_stage <= 3;
-    }).slice(0, 2).forEach(add);
-
-    due.filter((c) => {
-      const prog = progressMap[c.chunk_id];
-      return prog && prog.srs_stage >= 4;
-    }).slice(0, 1).forEach(add);
-  }
+  due.filter((c) => {
+    const prog = progressMap[c.chunk_id];
+    return prog && prog.srs_stage >= 4;
+  }).slice(0, 1).forEach(add);
 
   if (selected.length < 2) {
     due.filter((c) => !isNewChunk(c)).slice(0, 4).forEach(add);
@@ -1380,7 +1370,7 @@ function findCachedPassage_(chunkKey, index, band, progressMap, excludePassageId
 function generateDynamicPassage_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds) {
   const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
-  const excludeMap = buildExcludeChunkMap_(userId, excludeChunkIds);
+  const excludeMap = buildTemplateExcludeMap_(userId, excludeChunkIds, progressMap, new Date());
 
   const dueData = handleDueChunks_({
     user_id: userId,

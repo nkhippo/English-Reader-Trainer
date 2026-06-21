@@ -164,7 +164,7 @@ After redeploying GAS with Phase 3 code:
 
 If `encounter_log` has rows but `user_progress` is empty, run **`rebuildUserProgressFromEncounters()`** once in the Apps Script editor.
 
-SRS rules (§4.2): got_it → stage+1, still_hard → stage−1, passive → +1 day, graduated at 5 encounters × 3 passages.
+SRS rules (§4.2): got_it → stage+1, still_hard → stage−1, passive → +1 day. Graduated at got_it ≥ 6 × distinct passages ≥ 5 × span ≥ 3 days. Non-due chunks are not reshown until next_due_at.
 
 ## Phase 4: Passage generation (template / hybrid / dynamic)
 

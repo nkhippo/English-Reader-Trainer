@@ -107,7 +107,7 @@ Claude API
 
 **シグナル:** got_it (+1 stage) / still_hard (−1) / passive (+1日延長)
 
-**卒業:** encounter ≥ 5 AND distinct_passages ≥ 3 AND still_hard率 < 30%
+**卒業:** got_it ≥ 6 AND distinct_passages ≥ 5 AND 初回遭遇から ≥ 3日 AND still_hard率 < 30%（passive のみでは卒業しない）
 
 ### 2.4 パッセージ供給（hybrid）
 
