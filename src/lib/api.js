@@ -1,7 +1,27 @@
 import { DEFAULT_GAS_URL } from './config.js';
 
 const READ_ACTIONS = new Set(['session', 'due_chunks', 'generate_passage', 'stats']);
-const REQUEST_TIMEOUT_MS = 30000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+/** session / generate_passage can exceed 30s on cold GAS (measured ~40s). */
+const SLOW_ACTION_TIMEOUT_MS = 90000;
+const SLOW_ACTIONS = new Set(['session', 'generate_passage']);
+
+function requestTimeoutMs(action) {
+  return SLOW_ACTIONS.has(action) ? SLOW_ACTION_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS;
+}
+
+function isRequestTimeout(err) {
+  return err?.name === 'TimeoutError'
+    || (err?.name === 'AbortError' && /timed out/i.test(String(err?.message || err)));
+}
+
+function logActionRetry(method, action, err, nextMethod) {
+  if (isRequestTimeout(err)) {
+    console.info(`[ERT] ${method} ${action} timed out, retrying via ${nextMethod}`);
+    return;
+  }
+  console.warn(`[ERT] ${method} ${action} failed, retrying via ${nextMethod}:`, err);
+}
 
 function getGasUrl() {
   return import.meta.env.VITE_GAS_URL || DEFAULT_GAS_URL;
@@ -22,9 +42,11 @@ async function parseGasResponse(res, action) {
   return data;
 }
 
-function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => {
+    controller.abort(new DOMException(`GAS request timed out after ${timeoutMs}ms`, 'TimeoutError'));
+  }, timeoutMs);
   return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
@@ -36,11 +58,15 @@ async function postAction(action, payload = {}) {
   }
 
   const body = JSON.stringify({ action, ...payload });
-  const res = await fetchWithTimeout(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body,
-  });
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body,
+    },
+    requestTimeoutMs(action),
+  );
 
   if (!res.ok) {
     throw new Error(`GAS ${action} failed: HTTP ${res.status}`);
@@ -58,7 +84,7 @@ async function getAction(action, payload = {}) {
   }
 
   const data = encodeURIComponent(JSON.stringify({ action, ...payload }));
-  const res = await fetchWithTimeout(`${url}?data=${data}`);
+  const res = await fetchWithTimeout(`${url}?data=${data}`, {}, requestTimeoutMs(action));
 
   if (!res.ok) {
     throw new Error(`GAS ${action} failed: HTTP ${res.status}`);
@@ -72,7 +98,7 @@ async function callAction(action, payload = {}) {
     try {
       return await getAction(action, payload);
     } catch (getErr) {
-      console.warn(`[ERT] GET ${action} failed, retrying via POST:`, getErr);
+      logActionRetry('GET', action, getErr, 'POST');
       return postAction(action, payload);
     }
   }
@@ -80,7 +106,7 @@ async function callAction(action, payload = {}) {
   try {
     return await postAction(action, payload);
   } catch (postErr) {
-    console.warn(`[ERT] POST ${action} failed, retrying via GET:`, postErr);
+    logActionRetry('POST', action, postErr, 'GET');
     return getAction(action, payload);
   }
 }
