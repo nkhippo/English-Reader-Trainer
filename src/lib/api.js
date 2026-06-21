@@ -111,9 +111,9 @@ async function callAction(action, payload = {}) {
   }
 }
 
-export async function fetchSession({ userId, cefr }) {
+export async function fetchSession({ userId, cefr, excludeChunkIds = [] }) {
   try {
-    return await callAction('session', { user_id: userId, cefr });
+    return await callAction('session', { user_id: userId, cefr, exclude_chunk_ids: excludeChunkIds });
   } catch (err) {
     const message = String(err?.message || err);
     if (!message.includes('Unknown action')) throw err;
@@ -128,11 +128,12 @@ export async function fetchDueChunks({ userId, cefr, limit = 20 }) {
   return callAction('due_chunks', { user_id: userId, cefr, limit });
 }
 
-export async function fetchGeneratePassage({ userId, cefr, excludePassageIds = [] }) {
+export async function fetchGeneratePassage({ userId, cefr, excludePassageIds = [], excludeChunkIds = [] }) {
   return callAction('generate_passage', {
     user_id: userId,
     cefr,
     exclude_passage_ids: excludePassageIds,
+    exclude_chunk_ids: excludeChunkIds,
   });
 }
 

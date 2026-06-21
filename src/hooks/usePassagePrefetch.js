@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { fetchGeneratePassage } from '../lib/api.js';
+import { chunkIdsFromPassages } from '../lib/chunkIds.js';
 import { PREFETCH_QUEUE_SIZE, USER_ID } from '../lib/config.js';
 import { normalizePassagesFromApi } from '../lib/passages.js';
 
 /**
  * Keep a queue of prefetched passages while the user reads.
  */
-export function usePassagePrefetch({ cefrBand, seenPassageIds, enabled }) {
+export function usePassagePrefetch({ cefrBand, seenPassageIds, seenPassages, enabled }) {
   const queueRef = useRef([]);
   const inflightRef = useRef(null);
   const bandRef = useRef(cefrBand);
   const seenRef = useRef([]);
+  const passagesRef = useRef([]);
 
   const clearPrefetch = useCallback(() => {
     queueRef.current = [];
@@ -24,12 +26,17 @@ export function usePassagePrefetch({ cefrBand, seenPassageIds, enabled }) {
 
   const fetchNextPassage = useCallback(async (extraExclude = []) => {
     const exclude = new Set([...seenRef.current, ...extraExclude, ...queueRef.current.map((p) => p.id)]);
+    const excludeChunkIds = chunkIdsFromPassages([
+      ...passagesRef.current,
+      ...queueRef.current,
+    ]);
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const res = await fetchGeneratePassage({
         userId: USER_ID,
         cefr: bandRef.current,
         excludePassageIds: [...exclude],
+        excludeChunkIds,
       });
       const normalized = normalizePassagesFromApi(res.passages || []);
       const next = normalized[0] ?? null;
@@ -70,8 +77,9 @@ export function usePassagePrefetch({ cefrBand, seenPassageIds, enabled }) {
 
   useEffect(() => {
     seenRef.current = seenPassageIds || [];
+    passagesRef.current = seenPassages || [];
     queueRef.current = queueRef.current.filter((p) => !seenRef.current.includes(p.id));
-  }, [seenPassageIds]);
+  }, [seenPassageIds, seenPassages]);
 
   useEffect(() => {
     if (!enabled || seenPassageIds.length === 0) return;

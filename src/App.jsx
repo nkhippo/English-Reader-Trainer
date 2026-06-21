@@ -14,6 +14,7 @@ import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
 import { pickUnseenBandTemplate } from './lib/localPassages.js';
 import { acquireNextPassageIndex } from './lib/passageList.js';
+import { chunkIdsFromPassages } from './lib/chunkIds.js';
 import { normalizeBandStats } from './lib/stats.js';
 import { USER_ID } from './lib/config.js';
 import { useI18n } from './i18n/I18nProvider.jsx';
@@ -24,11 +25,12 @@ function firstPassageFromResponse(res) {
   return null;
 }
 
-async function fetchRemotePassage(cefrBand, seenIds) {
+async function fetchRemotePassage(cefrBand, seenIds, excludeChunkIds) {
   const res = await fetchGeneratePassage({
     userId: USER_ID,
     cefr: cefrBand,
     excludePassageIds: seenIds,
+    excludeChunkIds,
   });
   const normalized = normalizePassagesFromApi(res.passages || []);
   return normalized[0] ?? null;
@@ -98,6 +100,7 @@ export default function App() {
   const { consumePrefetched, takeQueuedPassage, fillQueue } = usePassagePrefetch({
     cefrBand,
     seenPassageIds: passages.map((p) => p.id),
+    seenPassages: passages,
     enabled: !loading && passages.length > 0,
   });
 
@@ -109,7 +112,7 @@ export default function App() {
       consumePrefetched,
       fillQueue,
       pickLocal: (seenIds) => pickUnseenBandTemplate(cefrBand, seenIds),
-      fetchRemote: (seenIds) => fetchRemotePassage(cefrBand, seenIds),
+      fetchRemote: (seenIds) => fetchRemotePassage(cefrBand, seenIds, chunkIdsFromPassages(passagesRef.current)),
     });
   }, [cefrBand, consumePrefetched, fillQueue, takeQueuedPassage]);
 
