@@ -42,11 +42,8 @@ export async function pickUnseenBandTemplate(band, seenIds) {
   const candidates = getBandTemplates(band).filter((t) => !seen.has(t.passage_id));
   if (candidates.length === 0) {
     const all = getBandTemplates(band);
-    if (all.length === 0) return null;
-    const currentId = seenIds.length > 0 ? seenIds[seenIds.length - 1] : null;
-    const pool = currentId && all.length > 1
-      ? all.filter((t) => t.passage_id !== currentId)
-      : all;
+    const pool = all.filter((t) => !seen.has(t.passage_id));
+    if (pool.length === 0) return null;
     const tpl = pool[Math.floor(Math.random() * pool.length)];
     return templateToPassage(tpl);
   }

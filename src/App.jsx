@@ -9,10 +9,11 @@ import { TranslationOverlay } from './components/TranslationOverlay.jsx';
 import { ProcessingOverlay } from './components/ProcessingOverlay.jsx';
 import { ReadingTimerBar } from './components/ReadingTimerBar.jsx';
 import { StartReadingOverlay } from './components/StartReadingOverlay.jsx';
-import { fetchSession, fetchStats } from './lib/api.js';
+import { fetchSession, fetchStats, fetchGeneratePassage } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
 import { pickUnseenBandTemplate } from './lib/localPassages.js';
+import { acquireNextPassageIndex } from './lib/passageList.js';
 import { normalizeBandStats } from './lib/stats.js';
 import { USER_ID } from './lib/config.js';
 import { useI18n } from './i18n/I18nProvider.jsx';
@@ -23,17 +24,14 @@ function firstPassageFromResponse(res) {
   return null;
 }
 
-function appendPassage(setPassages, passagesRef, next) {
-  if (!next) return false;
-  let added = false;
-  setPassages((prev) => {
-    if (prev.some((p) => p.id === next.id)) return prev;
-    added = true;
-    const updated = [...prev, next];
-    passagesRef.current = updated;
-    return updated;
+async function fetchRemotePassage(cefrBand, seenIds) {
+  const res = await fetchGeneratePassage({
+    userId: USER_ID,
+    cefr: cefrBand,
+    excludePassageIds: seenIds,
   });
-  return added;
+  const normalized = normalizePassagesFromApi(res.passages || []);
+  return normalized[0] ?? null;
 }
 
 export default function App() {
@@ -97,30 +95,22 @@ export default function App() {
     onAdvancePastEnd: () => advancePastEndRef.current(),
   });
 
-  const { takeQueuedPassage, fillQueue } = usePassagePrefetch({
+  const { consumePrefetched, fillQueue } = usePassagePrefetch({
     cefrBand,
     seenPassageIds: passages.map((p) => p.id),
     enabled: !loading && passages.length > 0,
   });
 
   useEffect(() => {
-    advancePastEndRef.current = async () => {
-      const seenIds = passagesRef.current.map((p) => p.id);
-
-      const queued = takeQueuedPassage();
-      if (queued && appendPassage(setPassages, passagesRef, queued)) {
-        return passagesRef.current.length - 1;
-      }
-
-      const local = await pickUnseenBandTemplate(cefrBand, seenIds);
-      if (local && appendPassage(setPassages, passagesRef, local)) {
-        fillQueue();
-        return passagesRef.current.length - 1;
-      }
-
-      return null;
-    };
-  }, [cefrBand, fillQueue, takeQueuedPassage]);
+    advancePastEndRef.current = async () => acquireNextPassageIndex({
+      passagesRef,
+      setPassages,
+      consumePrefetched,
+      fillQueue,
+      pickLocal: (seenIds) => pickUnseenBandTemplate(cefrBand, seenIds),
+      fetchRemote: (seenIds) => fetchRemotePassage(cefrBand, seenIds),
+    });
+  }, [cefrBand, consumePrefetched, fillQueue]);
 
   const handleCefrChange = (band) => {
     storeCefrBand(band);

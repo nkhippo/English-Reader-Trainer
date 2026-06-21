@@ -82,10 +82,10 @@ export function usePassagePrefetch({ cefrBand, seenPassageIds, enabled }) {
   const takeQueuedPassage = useCallback(() => {
     while (queueRef.current.length > 0) {
       const next = queueRef.current.shift();
-      if (next && !isSeen(next)) {
-        fillQueue();
-        return next;
-      }
+      if (!next?.id) continue;
+      if (isSeen(next)) continue;
+      fillQueue();
+      return next;
     }
     return null;
   }, [fillQueue, isSeen]);

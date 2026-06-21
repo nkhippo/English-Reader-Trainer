@@ -33,6 +33,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   const actionPendingRef = useRef(false);
   const actionLockTimerRef = useRef(null);
   const actionStartedAtRef = useRef(0);
+  const currentIndexRef = useRef(0);
   const pauseAfterActionRef = useRef(false);
   const [pauseAfterAction, setPauseAfterAction] = useState(false);
   const passiveFiredRef = useRef(false);
@@ -84,12 +85,17 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   );
 
   useEffect(() => {
+    currentIndexRef.current = currentIndex;
+  }, [currentIndex]);
+
+  useEffect(() => {
     const key = passages.map((p) => p.id).join('|');
     const prevKey = passagesKeyRef.current;
     if (prevKey && prevKey !== key) {
       const isAppend = key.startsWith(`${prevKey}|`);
       if (!isAppend) {
         setCurrentIndex(0);
+        currentIndexRef.current = 0;
         setActiveChunkId(null);
         setMarginaliaOpen(false);
         resetReadingTimer();
@@ -132,10 +138,25 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     [activateTimer, resetMarginalia, resetReadingTimer],
   );
 
+  const forceGoToIndex = useCallback(
+    (newIndex, autoStart) => {
+      const count = passageCount();
+      if (newIndex < 0 || newIndex >= count) return false;
+      flushSync(() => {
+        setCurrentIndex(newIndex);
+        currentIndexRef.current = newIndex;
+      });
+      applyAfterTransition(autoStart);
+      return true;
+    },
+    [applyAfterTransition, passageCount],
+  );
+
   const transitionTo = useCallback(
     (newIndex, direction, { autoStart = false } = {}) => {
       const count = passageCount();
-      if (newIndex < 0 || newIndex >= count || newIndex === currentIndex) {
+      const fromIndex = currentIndexRef.current;
+      if (newIndex < 0 || newIndex >= count || newIndex === fromIndex) {
         return Promise.resolve(false);
       }
 
@@ -144,6 +165,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
         setIsTransitioning(true);
         setTimeout(() => {
           setCurrentIndex(newIndex);
+          currentIndexRef.current = newIndex;
           applyAfterTransition(autoStart);
           setIsTransitioning(false);
           setTransitionDirection(null);
@@ -151,13 +173,16 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
         }, TRANSITION_MS);
       });
     },
-    [applyAfterTransition, currentIndex, passageCount],
+    [applyAfterTransition, passageCount],
   );
 
   const advanceToNextInternal = useCallback(
     async ({ autoStart = false } = {}) => {
-      if (currentIndex + 1 < passageCount()) {
-        return transitionTo(currentIndex + 1, 'next', { autoStart });
+      const fromIndex = currentIndexRef.current;
+      const count = passageCount();
+
+      if (fromIndex + 1 < count) {
+        return transitionTo(fromIndex + 1, 'next', { autoStart });
       }
       if (!onAdvancePastEnd) {
         if (!autoStart) resetReadingTimer();
@@ -170,9 +195,16 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
         return false;
       }
 
-      return transitionTo(nextIndex, 'next', { autoStart });
+      const transitioned = await transitionTo(nextIndex, 'next', { autoStart });
+      if (transitioned) return true;
+
+      if (nextIndex < passageCount() && nextIndex !== currentIndexRef.current) {
+        console.warn('[ERT] transition failed — forcing navigation to index', nextIndex);
+        return forceGoToIndex(nextIndex, autoStart);
+      }
+      return false;
     },
-    [currentIndex, onAdvancePastEnd, passageCount, resetReadingTimer, transitionTo],
+    [forceGoToIndex, onAdvancePastEnd, passageCount, resetReadingTimer, transitionTo],
   );
 
   const advanceToNext = useCallback(
@@ -271,8 +303,15 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       recordEncounter(signal);
       const autoStart = !pauseAfterActionRef.current;
       try {
-        const advanced = await advanceToNextInternal({ autoStart });
+        let advanced = false;
+        for (let attempt = 0; attempt < 2 && !advanced; attempt += 1) {
+          advanced = await advanceToNextInternal({ autoStart });
+          if (!advanced && attempt === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+        }
         if (!advanced) {
+          console.warn('[ERT] could not advance to next passage');
           activateTimer({ resume: true });
         }
       } finally {
