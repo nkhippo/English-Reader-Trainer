@@ -24,20 +24,21 @@
 | 項目 | 値 |
 |------|-----|
 | エンドポイント | `https://api.anthropic.com/v1/messages` |
-| モデル定数 | `ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001'` |
+| パッセージ生成 | **`claude-sonnet-4-6`** (`MODEL_PASSAGE`) |
+| 品質 critique | **`claude-haiku-4-5-20251001`** (`MODEL_CRITIQUE`) |
+| enrich バッチ | **`claude-haiku-4-5-20251001`** (`MODEL_ENRICH`) |
 | API バージョン | `anthropic-version: 2023-06-01` |
-| 認証 | Script Property `ANTHROPIC_API_KEY` |
-| system メッセージ | **なし**（すべて user ロール 1 発） |
+| パッセージ生成 | system + user 分離、`prior_contexts` 注入、self_check |
+| 詳細 | [claude-api-prompt-renewal-work-request.md](./claude-api-prompt-renewal-work-request.md) |
 
-### モデル使い分け（現状）
+### モデル使い分け（2026-06 更新後）
 
-すべての Claude 呼び出しが **Haiku 4.5** に統一されています。
-
-| 用途 | モデル | max_tokens | バッチサイズ |
-|------|--------|------------|-------------|
+| 用途 | モデル | max_tokens | 備考 |
+|------|--------|------------|------|
+| 動的パッセージ生成 | **Sonnet 4.6** | 4,096 | system + user、prior_contexts |
+| 品質 critique | Haiku 4.5 | 2,048 | オフライン / warmup のみ |
 | 日本語訳 enrich | Haiku 4.5 | 16,384 | 125 件/回 |
 | 英語グロス enrich | Haiku 4.5 | 8,192 | 125 件/回 |
-| 動的パッセージ生成 | Haiku 4.5 | 4,096 | 1 パッセージ/回（最大 3 リトライ） |
 
 ---
 

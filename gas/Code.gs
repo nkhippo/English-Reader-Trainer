@@ -9,10 +9,12 @@
  * Manual setup (Apps Script editor):
  *   1. setupSheets() — once
  *   2. importChunksFromCefr() — after cefr_*.json in Drive shared/
- *   3. enrichAllTranslations() — runs until remaining = 0 (auto-continues via trigger if needed)
- *   4. migrateChunksAddEnTranslationColumn() — once on existing spreadsheets
- *   5. enrichAllEnglishGlosses() — runs until remaining = 0
- *   6. Redeploy Web App after code changes
+ *   3. preparePromptRenewalRefresh() — once before re-enrich after prompt renewal
+ *   4. enrichAllTranslations() — runs until remaining = 0
+ *   5. migrateChunksAddEnTranslationColumn() — once on existing spreadsheets
+ *   6. enrichAllEnglishGlosses() — runs until remaining = 0
+ *   7. generateTemplateBatch_(band, count) — optional template samples for review
+ *   8. Redeploy Web App after code changes
  */
 
 const SHEET_NAMES = {
@@ -35,6 +37,7 @@ const SHEET_HEADERS = {
   [SHEET_NAMES.PASSAGES]: [
     'passage_id', 'cefr', 'drive_file_id', 'target_chunk_ids',
     'word_count', 'audio_drive_url', 'generated_at',
+    'critique_total', 'critique_verdict',
   ],
   [SHEET_NAMES.ENCOUNTERS]: [
     'event_id', 'user_id', 'chunk_id', 'passage_id',
@@ -43,7 +46,11 @@ const SHEET_HEADERS = {
 };
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
-const ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001';
+const MODEL_PASSAGE = 'claude-sonnet-4-6';
+const MODEL_CRITIQUE = 'claude-haiku-4-5-20251001';
+const MODEL_ENRICH = 'claude-haiku-4-5-20251001';
+/** @deprecated Use MODEL_ENRICH / MODEL_PASSAGE / MODEL_CRITIQUE */
+const ANTHROPIC_MODEL = MODEL_ENRICH;
 /** Items per Claude call for ja/en enrichment batches (was 25). */
 const ENRICH_BATCH_SIZE = 125;
 /** Output token budget — scale with batch size to avoid truncated JSON. */
@@ -335,13 +342,16 @@ function callClaudeEnrich_(items, apiKey) {
   }));
 
   const payload = {
-    model: ANTHROPIC_MODEL,
+    model: MODEL_ENRICH,
     max_tokens: ENRICH_JA_MAX_TOKENS,
     messages: [{
       role: 'user',
-      content: `You are a bilingual English-Japanese lexicographer. For each item, provide:
-- ja_translation: concise natural Japanese (for chunks include 〜 where needed)
-- example_sentence: English example (keep existing if provided, else create one natural 8-18 word sentence)
+      content: `You are a bilingual English–Japanese lexicographer creating entries for a chunk-learning app. For each item, provide:
+
+- ja_translation: the CORE meaning in concise, natural Japanese. Capture the functional nucleus of the chunk, not a word-by-word gloss. If the chunk is polysemous, give the SINGLE most frequent sense only (the app stores one sense per chunk). Use 〜 to mark where words attach (e.g. "〜を引き受ける", "〜のおかげで").
+- example_sentence: keep the existing one if it is provided and good; otherwise write ONE natural, CONCRETE sentence (8–18 words) showing the chunk in its most typical context — a specific situation the learner can picture, never a generic statement.
+
+Keep the Japanese clear and natural for a general adult learner (avoid overly literary vocabulary).
 
 Return ONLY a JSON array, no markdown:
 [{"chunk_id":"...","ja_translation":"...","example_sentence":"..."}]
@@ -554,17 +564,24 @@ function callClaudeEnrichEnglish_(items, apiKey) {
   }));
 
   const payload = {
-    model: ANTHROPIC_MODEL,
+    model: MODEL_ENRICH,
     max_tokens: ENRICH_EN_MAX_TOKENS,
     messages: [{
       role: 'user',
-      content: `You are an English lexicographer writing learner-friendly glosses for CEFR vocabulary items.
+      content: `You are writing English-in-English glosses for a chunk-learning app used by Japanese learners. The gloss's job is to let a learner understand the item's meaning WITHOUT translating to Japanese — building a direct English-to-meaning pathway. Optimize for "a learner reads this and instantly gets it."
+
 For each item, provide:
-- en_translation: a concise English gloss (about 6-15 words)
-  - For single words: a brief definition using simple language
-  - For phrasal verbs / multi-word chunks: explain the meaning plainly (e.g. "to switch on a device")
-  - Match complexity to the CEFR level shown
-If ja_translation is provided, use it only as context. Write the gloss in English only.
+
+- en_translation: a short English gloss (about 6–15 words) capturing the single most frequent sense.
+
+Rules the gloss MUST follow:
+1. SIMPLER THAN THE HEADWORD. Use only words that are clearly easier than the item itself — roughly one to two CEFR levels below it. A learner who needs this gloss does not know hard words, so the gloss must not contain any.
+2. NO CIRCULAR DEFINITION. Never use the headword or its derivatives in the gloss (do not gloss "manage" with "to manage to...").
+3. SHOW HOW IT IS USED, not just what it means. For phrasal verbs and collocations, include the typical object or situation so the learner sees the chunk in action — e.g. "pick up" → "to lift something from the ground, or collect a person"; "make a decision" → "to choose what to do after thinking".
+4. EVOKE A SITUATION. Prefer wording that brings a concrete action or scene to mind over an abstract dictionary phrase.
+5. ONE SENSE ONLY. If the item is polysemous, gloss only its most frequent sense.
+
+If ja_translation is provided, use it only as private context for picking the right sense. Write the gloss in English only.
 
 Return ONLY a JSON array, no markdown:
 [{"chunk_id":"...","en_translation":"..."}]
@@ -960,7 +977,7 @@ function generateDynamicPassageClaude_(userId, band, index, progressMap, exclude
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const generated = callClaudeGeneratePassage_(chunks, band, apiKey);
+      const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index);
       if (!validatePassageChunks_(generated.text, chunks)) {
         throw new Error('Generated passage missing target chunks');
       }
@@ -1001,13 +1018,22 @@ function selectChunksForPassage_(dueData, progressMap, index, band) {
   const newChunks = dueData.new_chunks || [];
   const selected = [];
   const used = {};
+  let newCount = 0;
+
+  function isNewChunk(item) {
+    const prog = progressMap[item.chunk_id];
+    return !prog || prog.status === 'new' || prog.srs_stage === 0;
+  }
 
   function add(item) {
     if (!item || used[item.chunk_id]) return;
     const row = index[String(item.text).toLowerCase().trim()] || item;
-    used[row.chunk_id || item.chunk_id] = true;
+    const chunkId = row.chunk_id || item.chunk_id;
+    if (isNewChunk({ chunk_id: chunkId }) && newCount >= 2) return;
+    used[chunkId] = true;
+    if (isNewChunk({ chunk_id: chunkId })) newCount += 1;
     selected.push({
-      chunk_id: row.chunk_id || item.chunk_id,
+      chunk_id: chunkId,
       text: row.text || item.text,
       cefr: row.cefr || item.cefr,
     });
@@ -1026,7 +1052,10 @@ function selectChunksForPassage_(dueData, progressMap, index, band) {
   }).slice(0, 1).forEach(add);
 
   if (selected.length < 2) {
-    newChunks.slice(1, 4).forEach(add);
+    due.filter((c) => !isNewChunk(c)).slice(0, 4).forEach(add);
+  }
+  if (selected.length < 2 && newChunks.length > 1) {
+    add(newChunks[1]);
   }
   if (selected.length < 2) {
     due.slice(0, 4).forEach(add);
@@ -1059,16 +1088,26 @@ function findCachedPassage_(chunkKey, index, band, progressMap, excludePassageId
     if (ids !== chunkKey) continue;
     const passageId = String(data[r][col.passage_id] || '');
     if (exclude[passageId]) continue;
+    const verdict = col.critique_verdict !== undefined
+      ? String(data[r][col.critique_verdict] || '').toLowerCase()
+      : '';
+    if (verdict === 'revise') continue;
     const fileId = data[r][col.drive_file_id];
     if (!fileId) continue;
     try {
       const json = JSON.parse(DriveApp.getFileById(fileId).getBlob().getDataAsString('UTF-8'));
-      candidates.push(hydratePassageFromJson_(json, index, band, progressMap));
+      const hydrated = hydratePassageFromJson_(json, index, band, progressMap);
+      hydrated._critique_verdict = verdict;
+      candidates.push(hydrated);
     } catch (e) { /* skip bad cache */ }
   }
 
   if (candidates.length === 0) return null;
-  return candidates[Math.floor(Math.random() * candidates.length)];
+  const passed = candidates.filter((c) => c._critique_verdict === 'pass');
+  const pool = passed.length ? passed : candidates;
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  delete pick._critique_verdict;
+  return pick;
 }
 
 function generateDynamicPassage_(userId, band, index, progressMap, excludePassageIds) {
@@ -1086,7 +1125,7 @@ function generateDynamicPassage_(userId, band, index, progressMap, excludePassag
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const generated = callClaudeGeneratePassage_(chunks, band, apiKey);
+      const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index);
       if (!validatePassageChunks_(generated.text, chunks)) {
         throw new Error('Generated passage missing target chunks');
       }
@@ -1108,37 +1147,223 @@ function generateDynamicPassage_(userId, band, index, progressMap, excludePassag
   throw lastErr || new Error('Passage generation failed');
 }
 
-function callClaudeGeneratePassage_(chunks, band, apiKey) {
-  const chunkList = chunks.map((c) => ({ chunk_id: c.chunk_id, text: c.text, cefr: c.cefr }));
+function callClaudeGeneratePassage_(chunks, band, apiKey, index, revisionHint) {
   const cefrHint = band === 'A1A2' ? 'A1/A2' : band;
   const payload = {
-    model: ANTHROPIC_MODEL,
+    model: MODEL_PASSAGE,
     max_tokens: 4096,
+    system: PASSAGE_SYSTEM_PROMPT_,
     messages: [{
       role: 'user',
-      content: `Write a natural English reading passage for CEFR ${cefrHint} learners.
-
-Requirements:
-- 3 to 6 sentences, 60-120 words total
-- Use ONLY vocabulary appropriate for CEFR ${cefrHint} and below (i+1 principle)
-- Naturally embed ALL target chunks below (no forced or awkward insertion)
-- Provide accurate Japanese translation
-- For each chunk, report exact char_start and char_end (0-based, end exclusive) in the English text
-
-Return ONLY JSON, no markdown:
-{
-  "text": "full English passage as plain text",
-  "ja_translation": "natural Japanese translation",
-  "target_chunks": [
-    {"chunk_id":"...","text":"exact substring","char_start":0,"char_end":0}
-  ]
-}
-
-Target chunks:
-${JSON.stringify(chunkList)}`,
+      content: buildPassageUserPrompt_(chunks, band, index, revisionHint),
     }],
   };
 
+  return callAnthropicJson_(payload, apiKey);
+}
+
+const PASSAGE_SYSTEM_PROMPT_ = [
+  'You are an expert writer of graded reading passages for Japanese learners of English. Your passages power a spaced-repetition reading app whose single goal is to automatize knowledge of multi-word chunks (phrasal verbs, collocations, idioms, discourse markers) through repeated encounters in DIFFERENT contexts.',
+  '',
+  'Follow these principles without exception:',
+  '',
+  '1. COMPREHENSIBLE INPUT (true i+1). The words AROUND the target chunks must be ones the learner already knows — at or below the stated CEFR band. The target chunks are the ONLY new or practiced element (the "+1"). Never place an unknown word next to a target chunk; the learner must be able to lean on known context.',
+  '',
+  '2. INFERABILITY. For each target chunk, the situation must give concrete cues to its meaning, so a learner who does not yet know the chunk could reasonably guess it from context — without a dictionary.',
+  '',
+  '3. NATURAL USE. Each chunk must appear in the grammatical frame and with the typical collocates a fluent writer would actually use. Never twist a sentence just to fit a chunk. If two chunks cannot co-occur naturally, prioritize naturalness and say so in self_check.',
+  '',
+  '4. CONCRETE AND MEMORABLE. Write a vivid, specific scene — a particular person doing a particular thing in a particular place. Concrete, imageable situations are remembered far better than abstract statements. Never write generic filler such as "Many people think that..." or "In today\'s society...".',
+  '',
+  '5. CONTEXTUAL VARIETY. You will be told how each chunk appeared in PREVIOUS passages. Make THIS passage genuinely different: a different scenario, different collocates, a different sentence structure. Reusing a prior context defeats the entire purpose of the app.',
+  '',
+  '6. REGISTER BY CEFR BAND.',
+  '   - A1/A2: short concrete sentences; everyday scenes (home, shopping, travel, daily routine); present and past simple dominant.',
+  '   - B1: everyday plus light work and social topics; a wider range of connectors; some complex sentences.',
+  '   - B2: may include abstract or argumentative topics and a reporting register; richer cohesion.',
+  '',
+  'Output ONLY valid JSON (no markdown fences), in exactly this shape:',
+  '{',
+  '  "text": "the passage as plain text",',
+  '  "ja_translation": "natural Japanese translation faithful to the English",',
+  '  "target_chunks": [',
+  '    {"chunk_id": "...", "text": "exact substring as it appears in text", "char_start": 0, "char_end": 0}',
+  '  ],',
+  '  "self_check": {',
+  '    "all_chunks_used_naturally": true,',
+  '    "surrounding_vocab_within_band": true,',
+  '    "each_chunk_inferable_from_context": true,',
+  '    "different_from_prior_contexts": true,',
+  '    "notes": "one short sentence; flag any compromise you had to make"',
+  '  }',
+  '}',
+  '',
+  'char_start and char_end are 0-based, end-exclusive indices into the "text" field.',
+].join('\n');
+
+function buildPassageUserPrompt_(chunks, band, index, revisionHint) {
+  const cefrHint = band === 'A1A2' ? 'A1/A2' : band;
+  const lines = [
+    `CEFR band: ${cefrHint}`,
+    'Length: 3 to 6 sentences, 60 to 120 words total.',
+    '',
+    'Target chunks (embed ALL of them, each at least once):',
+    '',
+  ];
+
+  chunks.forEach((c) => {
+    const row = index[String(c.text).toLowerCase().trim()] || c;
+    const meaning = String(row.ja_translation || row.en_translation || '').trim();
+    lines.push(`- "${c.text}"  (chunk_id: ${c.chunk_id})`);
+    if (meaning) lines.push(`    intended meaning: ${meaning}`);
+    const priors = getChunkPriorContexts_(c.chunk_id, index, 3);
+    if (priors.length) {
+      lines.push('    previously appeared as:');
+      priors.forEach((snippet) => { lines.push(`      • ${snippet}`); });
+      lines.push('    make this encounter clearly different from the above.');
+    } else {
+      lines.push('    this is the learner\'s FIRST encounter — introduce it in an especially clear, self-explaining context.');
+    }
+    lines.push('');
+  });
+
+  lines.push('Write the passage now.');
+  if (revisionHint) {
+    lines.push('');
+    lines.push(`Revision instruction: ${revisionHint}`);
+  }
+  return lines.join('\n');
+}
+
+function getChunkPriorContexts_(chunkId, index, limit) {
+  limit = limit || 3;
+  const sheet = getSheet_(SHEET_NAMES.PASSAGES);
+  if (sheet.getLastRow() < 2) return [];
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const col = indexColumns_(headers);
+  const snippets = [];
+  const seen = {};
+
+  for (let r = data.length - 1; r >= 1 && snippets.length < limit; r--) {
+    const ids = String(data[r][col.target_chunk_ids] || '').split(',');
+    if (ids.indexOf(chunkId) < 0) continue;
+    const fileId = data[r][col.drive_file_id];
+    if (!fileId || seen[fileId]) continue;
+    seen[fileId] = true;
+    try {
+      const json = JSON.parse(DriveApp.getFileById(fileId).getBlob().getDataAsString('UTF-8'));
+      const text = json.text || '';
+      const chunkText = findChunkTextForId_(chunkId, json, index);
+      if (!chunkText) continue;
+      const snippet = extractSentenceContainingChunk_(text, chunkText);
+      if (snippet && snippets.indexOf(snippet) < 0) snippets.push(snippet);
+    } catch (e) { /* skip */ }
+  }
+  return snippets;
+}
+
+function findChunkTextForId_(chunkId, passageJson, index) {
+  const targets = passageJson.target_chunks || [];
+  for (let i = 0; i < targets.length; i++) {
+    if (targets[i].chunk_id === chunkId) return targets[i].text;
+  }
+  for (const key in index) {
+    if (index[key].chunk_id === chunkId) return index[key].text;
+  }
+  return '';
+}
+
+function extractSentenceContainingChunk_(text, chunkText) {
+  const lower = String(text).toLowerCase();
+  const needle = String(chunkText).toLowerCase();
+  const idx = lower.indexOf(needle);
+  if (idx < 0) return String(text).slice(0, 120).trim();
+  let start = idx;
+  let end = idx + chunkText.length;
+  while (start > 0 && !'.!?'.includes(text[start - 1])) start -= 1;
+  while (end < text.length && !'.!?'.includes(text[end])) end += 1;
+  if (end < text.length) end += 1;
+  return text.slice(start, end).trim();
+}
+
+function callClaudeCritiquePassage_(generated, chunks, band, index, apiKey) {
+  const cefrHint = band === 'A1A2' ? 'A1/A2' : band;
+  const chunkLines = chunks.map((c) => {
+    const row = index[String(c.text).toLowerCase().trim()] || c;
+    const meaning = String(row.ja_translation || row.en_translation || '').trim();
+    const priors = getChunkPriorContexts_(c.chunk_id, index, 3);
+    return `- "${c.text}"${meaning ? ` (${meaning})` : ''}${priors.length ? `\n  prior: ${priors.join(' | ')}` : ''}`;
+  }).join('\n');
+
+  const payload = {
+    model: MODEL_CRITIQUE,
+    max_tokens: 2048,
+    messages: [{
+      role: 'user',
+      content: [
+        `You are a strict reviewer of graded reading passages for CEFR ${cefrHint} learners of English. Score the passage on each criterion from 0 to 2 (0 = fails, 1 = weak, 2 = good). Be honest; this gates what learners see.`,
+        '',
+        'Passage:',
+        generated.text,
+        '',
+        'Japanese translation:',
+        generated.ja_translation,
+        '',
+        'Target chunks (with intended meaning):',
+        chunkLines,
+        '',
+        'Criteria:',
+        '- naturalness: reads like authentic English; no chunk was forced in awkwardly',
+        '- comprehensibility: surrounding vocabulary is within CEFR band; nothing harder than the target chunks themselves',
+        '- inferability: each target chunk\'s meaning can be guessed from the surrounding context',
+        '- chunk_integrity: every target chunk appears verbatim and is used correctly',
+        '- variety: genuinely different scenario/collocates/structure from the prior contexts (score 2 if no prior contexts were given)',
+        '- concreteness: a vivid, specific situation rather than abstract filler',
+        '- translation_fidelity: the Japanese is accurate and natural',
+        '',
+        'Output ONLY JSON:',
+        '{',
+        '  "scores": {',
+        '    "naturalness": 0,',
+        '    "comprehensibility": 0,',
+        '    "inferability": 0,',
+        '    "chunk_integrity": 0,',
+        '    "variety": 0,',
+        '    "concreteness": 0,',
+        '    "translation_fidelity": 0',
+        '  },',
+        '  "total": 0,',
+        '  "verdict": "pass" or "revise",',
+        '  "problems": ["short bullet per issue"],',
+        '  "revision_hint": "one concrete instruction for regeneration, if verdict is revise"',
+        '}',
+        '',
+        'Pass threshold: total >= 11 AND no single criterion scores 0.',
+      ].join('\n'),
+    }],
+  };
+
+  return callAnthropicJson_(payload, apiKey);
+}
+
+function critiquePasses_(critique) {
+  if (!critique || !critique.scores) return false;
+  const scores = critique.scores;
+  const keys = ['naturalness', 'comprehensibility', 'inferability', 'chunk_integrity',
+    'variety', 'concreteness', 'translation_fidelity'];
+  let total = 0;
+  for (let i = 0; i < keys.length; i++) {
+    const s = Number(scores[keys[i]]);
+    if (isNaN(s) || s <= 0) return false;
+    total += s;
+  }
+  if (total < 11) return false;
+  if (String(critique.verdict || '').toLowerCase() === 'revise') return false;
+  return true;
+}
+
+function callAnthropicJson_(payload, apiKey) {
   const res = UrlFetchApp.fetch(ANTHROPIC_API_URL, {
     method: 'post',
     contentType: 'application/json',
@@ -1184,7 +1409,21 @@ function validatePassageQuality_(generated) {
     if (isNaN(start) || isNaN(end) || end <= start) return false;
     const slice = text.slice(start, end);
     return slice && slice.toLowerCase() === String(tc.text).toLowerCase();
-  });
+  }) && validatePassageSelfCheck_(generated.self_check);
+}
+
+function validatePassageSelfCheck_(selfCheck) {
+  if (!selfCheck) return true;
+  const flags = [
+    'all_chunks_used_naturally',
+    'surrounding_vocab_within_band',
+    'each_chunk_inferable_from_context',
+    'different_from_prior_contexts',
+  ];
+  for (let i = 0; i < flags.length; i++) {
+    if (selfCheck[flags[i]] === false) return false;
+  }
+  return true;
 }
 
 function buildTextMarkupFromPositions_(text, targetChunks) {
@@ -1287,10 +1526,13 @@ function savePassageToDrive_(passage) {
   return file.getId();
 }
 
-function registerPassageMeta_(passage, chunks) {
+function registerPassageMeta_(passage, chunks, critique) {
+  ensurePassagesCritiqueColumns_();
   const sheet = getSheet_(SHEET_NAMES.PASSAGES);
   const text = passage.text || passage.text_markup.replace(/\{\{|\}\}/g, '');
   const wordCount = text.split(/\s+/).filter(Boolean).length;
+  const total = critique && critique.total != null ? critique.total : '';
+  const verdict = critique && critique.verdict ? critique.verdict : '';
   sheet.appendRow([
     passage.passage_id,
     passage.cefr_band,
@@ -1299,7 +1541,229 @@ function registerPassageMeta_(passage, chunks) {
     wordCount,
     '',
     new Date().toISOString(),
+    total,
+    verdict,
   ]);
+}
+
+// ===== Prompt renewal: sheet refresh + critique migration =====
+
+/**
+ * Run ONCE before re-running enrich with renewed prompts (§ work-request).
+ * Clears translation columns, removes legacy passage cache, adds critique columns.
+ */
+function preparePromptRenewalRefresh() {
+  const chunksCleared = clearChunksTranslationsForReenrich_();
+  ensurePassagesCritiqueColumns_();
+  const passagesCleared = clearPassagesMetaAndDriveCache_();
+  Logger.log(JSON.stringify({
+    ok: true,
+    chunks_rows_cleared: chunksCleared,
+    passages_meta_rows_cleared: passagesCleared,
+  }));
+  return {
+    ok: true,
+    chunks_rows_cleared: chunksCleared,
+    passages_meta_rows_cleared: passagesCleared,
+    next_steps: [
+      '1. enrichAllTranslations() until remaining = 0',
+      '2. enrichAllEnglishGlosses() until remaining = 0',
+      '3. Redeploy Web App (Manage deployments → New version)',
+      '4. generateTemplateBatch_("B1", 1) for sample review',
+    ],
+  };
+}
+
+/** Clear ja_translation, en_translation, example_sentence so enrich re-runs with new prompts. */
+function clearChunksTranslationsForReenrich_() {
+  ensureChunksEnTranslationColumn_();
+  const sheet = getSheet_(SHEET_NAMES.CHUNKS);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const col = indexColumns_(headers);
+  const jaCol = col.ja_translation + 1;
+  const enCol = col.en_translation + 1;
+  const exCol = col.example_sentence + 1;
+  const rows = lastRow - 1;
+  sheet.getRange(2, jaCol, rows, 1).clearContent();
+  sheet.getRange(2, enCol, rows, 1).clearContent();
+  sheet.getRange(2, exCol, rows, 1).clearContent();
+  Logger.log(`Cleared ja_translation, en_translation, example_sentence on ${rows} rows.`);
+  return rows;
+}
+
+function ensurePassagesCritiqueColumns_() {
+  const sheet = getSheet_(SHEET_NAMES.PASSAGES);
+  if (sheet.getLastRow() < 1) return false;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  let changed = false;
+  if (headers.indexOf('critique_total') < 0) {
+    sheet.insertColumnAfter(headers.length);
+    sheet.getRange(1, headers.length + 1).setValue('critique_total');
+    changed = true;
+  }
+  const headers2 = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (headers2.indexOf('critique_verdict') < 0) {
+    sheet.insertColumnAfter(headers2.length);
+    sheet.getRange(1, headers2.length + 1).setValue('critique_verdict');
+    changed = true;
+  }
+  if (changed) Logger.log('Added critique_total / critique_verdict to passages_meta.');
+  return true;
+}
+
+/** Remove old dynamically generated passages (pre–prompt-renewal cache). */
+function clearPassagesMetaAndDriveCache_() {
+  const sheet = getSheet_(SHEET_NAMES.PASSAGES);
+  const lastRow = sheet.getLastRow();
+  let cleared = 0;
+  if (lastRow > 1) {
+    sheet.deleteRows(2, lastRow - 1);
+    cleared = lastRow - 1;
+  }
+  try {
+    const folder = getOrCreateSubfolder_(getDriveRoot_(), 'passages');
+    const files = folder.getFiles();
+    while (files.hasNext()) {
+      files.next().setTrashed(true);
+    }
+  } catch (e) {
+    Logger.log('Drive passages/ clear: ' + e);
+  }
+  Logger.log(`Cleared ${cleared} passages_meta rows and Drive passages/ cache.`);
+  return cleared;
+}
+
+/**
+ * Background: generate + critique until pass. Stores critique_verdict=pass in passages_meta.
+ */
+function generatePassageWithCritique_(chunks, band, index, progressMap, apiKey) {
+  let revisionHint = '';
+  let lastErr = null;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, revisionHint);
+      if (!validatePassageChunks_(generated.text, chunks)) {
+        throw new Error('Generated passage missing target chunks');
+      }
+      if (!validatePassageQuality_(generated)) {
+        throw new Error('Generated passage failed quality checks');
+      }
+      const critique = callClaudeCritiquePassage_(generated, chunks, band, index, apiKey);
+      if (!critiquePasses_(critique)) {
+        revisionHint = critique.revision_hint || (critique.problems || []).join('; ');
+        throw new Error('Critique revise: ' + revisionHint);
+      }
+      const passage = buildPassageOutput_(generated, chunks, index, band, progressMap);
+      savePassageToDrive_(passage);
+      registerPassageMeta_(passage, chunks, critique);
+      return { passage, critique };
+    } catch (err) {
+      lastErr = err;
+      Utilities.sleep(600);
+    }
+  }
+  throw lastErr || new Error('generatePassageWithCritique_ failed');
+}
+
+/**
+ * Generate template candidates for Naoya review. Outputs to Logger + Drive shared/.
+ * @param {string} band A1A2 | B1 | B2
+ * @param {number} count passages to generate
+ */
+function generateTemplateBatch_(band, count) {
+  band = normalizeCefrBand_(band || 'B1');
+  count = Math.max(1, Math.min(count || 1, 5));
+  const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
+
+  const index = loadChunksIndex_();
+  const progressMap = {};
+  const pool = Object.values(index).filter((c) => cefrMatchesBand_(c.cefr, band));
+  if (pool.length < 4) throw new Error('Not enough chunks for band ' + band);
+
+  const themes = ['daily routine', 'shopping', 'travel', 'work', 'friends and family'];
+  const existing = getPassageTemplatesForBand_(band);
+  const excludeOpeners = existing.map((t) => String(t.text_markup || '').slice(0, 40));
+  const results = [];
+
+  for (let n = 0; n < count; n++) {
+    shuffleArrayInPlace_(pool);
+    const size = 2 + Math.floor(Math.random() * 3);
+    const chunks = pool.slice(0, size).map((c) => ({
+      chunk_id: c.chunk_id,
+      text: c.text,
+      cefr: c.cefr,
+    }));
+    const themeHint = themes[n % themes.length];
+    const revisionHint = `Theme: ${themeHint}. Avoid openings similar to: ${excludeOpeners.join(' | ')}`;
+
+    const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, revisionHint);
+    if (!validatePassageQuality_(generated)) {
+      Logger.log('Template batch: quality fail, skipping');
+      continue;
+    }
+    const critique = callClaudeCritiquePassage_(generated, chunks, band, index, apiKey);
+    const chunkTexts = (generated.target_chunks || []).map((tc) => tc.text);
+    const tpl = {
+      passage_id: 'ps_gen_' + band.toLowerCase() + '_' + (n + 1),
+      cefr_band: band,
+      text_markup: buildTextMarkupFromPositions_(generated.text, generated.target_chunks || []),
+      ja_translation: generated.ja_translation || '',
+      chunk_texts: chunkTexts,
+      critique_total: critique.total,
+      critique_verdict: critique.verdict,
+    };
+    results.push(tpl);
+    excludeOpeners.push(String(tpl.text_markup).slice(0, 40));
+  }
+
+  const outName = 'template-batch-' + band + '-' + Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyyMMdd-HHmm') + '.json';
+  const payload = {};
+  payload[band] = results;
+  const shared = getOrCreateSubfolder_(getDriveRoot_(), 'shared');
+  shared.createFile(outName, JSON.stringify(payload, null, 2), MimeType.PLAIN_TEXT);
+  Logger.log(JSON.stringify({ band, count: results.length, file: outName, templates: results }, null, 2));
+  return { band, count: results.length, drive_file: outName, templates: results };
+}
+
+/** Warmup: generate critique-passed passages for due-like chunk sets (offline). */
+function warmupPassagesForBand_(band, count) {
+  band = normalizeCefrBand_(band || 'B1');
+  count = Math.max(1, Math.min(count || 3, 10));
+  const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
+
+  const index = loadChunksIndex_();
+  const progressMap = loadUserProgressMap_('naoya');
+  const dueData = handleDueChunks_({ user_id: 'naoya', cefr: band, limit: 20 });
+  let generated = 0;
+  const errors = [];
+
+  for (let i = 0; i < count; i++) {
+    try {
+      const chunks = selectChunksForPassage_(dueData, progressMap, index, band);
+      if (chunks.length < 2) break;
+      generatePassageWithCritique_(chunks, band, index, progressMap, apiKey);
+      generated += 1;
+      Utilities.sleep(800);
+    } catch (e) {
+      errors.push(String(e));
+    }
+  }
+  return { band, generated, errors };
+}
+
+function shuffleArrayInPlace_(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const t = arr[i];
+    arr[i] = arr[j];
+    arr[j] = t;
+  }
+  return arr;
 }
 
 function pickTemplatePassage_(band, index, progressMap, excludePassageIds) {

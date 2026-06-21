@@ -57,7 +57,7 @@ See the work-request document (§3.1) for full column definitions.
 |-----|---------|
 | `chunks_master` | CEFR chunk vocabulary (Phase 2) |
 | `user_progress` | SRS state per chunk (Phase 3) |
-| `passages_meta` | Generated passage metadata (Phase 4) |
+| `passages_meta` | Generated passage metadata (Phase 4) + critique scores |
 | `encounter_log` | Event log (Phase 1+) |
 
 ## Drive Structure
@@ -204,6 +204,60 @@ USE_DYNAMIC_PASSAGES = hybrid
 - Processing overlay lasts only the ~200ms page transition, not the GAS round-trip.
 
 Generated passages are saved to Drive `passages/` and registered in `passages_meta`.
+
+## Phase 4b: Prompt renewal (2026-06)
+
+プロンプト・モデル全面見直し後、**翻訳と動的パッセージキャッシュを作り直す**手順。詳細: [claude-api-prompt-renewal-work-request.md](./claude-api-prompt-renewal-work-request.md)
+
+### 1. GAS を更新・再デプロイ
+
+最新 `gas/Code.gs` を貼り付け → **New version** でデプロイ。
+
+### 2. スプレッドシート / Drive をリフレッシュ（1 回だけ）
+
+Apps Script エディタで **1 回** 実行:
+
+```
+preparePromptRenewalRefresh()
+```
+
+| 対象 | 処理 |
+|------|------|
+| `chunks_master.ja_translation` | **全行クリア** |
+| `chunks_master.en_translation` | **全行クリア** |
+| `chunks_master.example_sentence` | **全行クリア** |
+| `passages_meta` | データ行を削除（ヘッダー残す） |
+| Drive `passages/` | 既存 JSON をゴミ箱へ |
+| `passages_meta` | `critique_total` / `critique_verdict` 列を追加（未設定時） |
+
+**触らないもの:** `user_progress`, `encounter_log`（SRS 履歴は保持）
+
+### 3. 翻訳バッチを再実行
+
+```
+enrichAllTranslations()        # remaining: 0 まで
+enrichAllEnglishGlosses()      # remaining: 0 まで
+```
+
+新プロンプト（コア意味・L2-L2 グロス）で 7,125 件を再生成。
+
+### 4. テンプレサンプル生成（レビュー用）
+
+```
+generateTemplateBatch_("A1A2", 1)
+generateTemplateBatch_("B1", 1)
+generateTemplateBatch_("B2", 1)
+```
+
+Drive `shared/template-batch-*.json` に出力。合格品をレビュー後 `passage-templates.json` にマージ。
+
+### 5. バックグラウンド warmup（任意）
+
+```
+warmupPassagesForBand_("B1", 3)
+```
+
+critique 合格パッセージのみ `passages_meta` に `critique_verdict=pass` で保存。
 
 ## Local Development
 
