@@ -130,10 +130,14 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   const applyAfterTransition = useCallback(
     (autoStart) => {
       resetMarginalia();
-      if (autoStart) {
+      const shouldAutoStart = autoStart && !pauseAfterActionRef.current;
+      if (shouldAutoStart) {
         activateTimer();
       } else {
         resetReadingTimer();
+        if (pauseAfterActionRef.current) {
+          setIsPaused(true);
+        }
       }
     },
     [activateTimer, resetMarginalia, resetReadingTimer],
@@ -315,19 +319,25 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       stopTimer();
       resetMarginalia();
       recordEncounter(signal);
-      const autoStart = !pauseAfterActionRef.current;
       try {
         let advanced = false;
         for (let attempt = 0; attempt < 2 && !advanced; attempt += 1) {
           if (actionGenerationRef.current !== gen) break;
-          advanced = await advanceToNextInternal({ autoStart });
+          advanced = await advanceToNextInternal({ autoStart: true });
           if (!advanced && attempt === 0) {
             await new Promise((resolve) => setTimeout(resolve, 50));
           }
         }
         if (actionGenerationRef.current === gen && !advanced) {
           console.warn('[ERT] could not advance to next passage');
-          activateTimer({ resume: true });
+          if (pauseAfterActionRef.current) {
+            setIsPaused(true);
+            setAwaitingStart(true);
+            setIsReadingStarted(false);
+            setIsTimerRunning(false);
+          } else {
+            activateTimer({ resume: true });
+          }
         }
       } finally {
         if (actionGenerationRef.current !== gen) return;
