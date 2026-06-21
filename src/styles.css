@@ -61,15 +61,78 @@ button {
 
 .header {
   grid-row: 1;
-  padding: max(14px, env(safe-area-inset-top, 0px)) 32px 14px;
+  padding: max(14px, env(safe-area-inset-top, 0px)) 32px 12px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 10px;
   border-bottom: 1px solid var(--color-rule);
   font-family: var(--font-ui);
   font-size: 12px;
   color: var(--color-ink-soft);
   letter-spacing: 0.02em;
+}
+
+.header__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+
+.header__progress {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 20px;
+  width: 100%;
+}
+
+.band-progress__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.band-progress__label {
+  font-weight: 600;
+  color: var(--color-ink);
+  flex: 0 0 auto;
+}
+
+.band-progress__nums {
+  color: var(--color-ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.band-progress__pct {
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.band-progress__track {
+  height: 4px;
+  background: rgba(26, 34, 54, 0.08);
+  border-radius: 100px;
+  overflow: hidden;
+}
+
+.band-progress__fill {
+  height: 100%;
+  border-radius: 100px;
+  transition: width 320ms ease;
+}
+
+.band-progress__fill--exposure {
+  background: var(--color-ink);
+}
+
+.band-progress__fill--graduation {
+  background: var(--color-graduated);
 }
 
 .level-pill {
@@ -756,10 +819,24 @@ html[lang='ja'] .note__meta {
   }
 
   .header {
-    padding: max(11px, env(safe-area-inset-top, 0px)) 18px 11px;
+    padding: max(11px, env(safe-area-inset-top, 0px)) 18px 10px;
     font-size: 10px;
+    gap: 8px;
+  }
+
+  .header__top {
     flex-wrap: wrap;
     gap: 10px;
+  }
+
+  .header__progress {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .band-progress__meta {
+    font-size: 9px;
+    gap: 6px;
   }
 
   .cefr-picker {

@@ -197,7 +197,7 @@ Script Property **`USE_DYNAMIC_PASSAGES`** で 3 モード切替。
 | Got it / Still hard | 低摩擦フィードバック | ✅ |
 | Cloze（柱 5） | ~30% で 1 チャンク `___`、タップで開示 | ✅ |
 | CEFR 切替 | A1+A2 / B1 / B2（セグメント） | ✅ |
-| ヘッダー統計 | reviewing / graduated | ✅ |
+| ヘッダー統計 | reviewing / graduated + **初回露出・卒業のプログレスバー** | ✅ |
 
 ### 2.6 思想と実装の対応
 
@@ -277,7 +277,7 @@ Script Property **`USE_DYNAMIC_PASSAGES`** で 3 モード切替。
 - 「卒業近い」「停滞中」チャンクリスト
 - 累積読書時間
 
-**現状**: ヘッダーの reviewing / graduated 件数のみ（Phase 6 の縮小版）
+**現状**: ヘッダーに reviewing / graduated 件数 + 初回露出・卒業の 2 本プログレスバー（Phase 6 の縮小版）
 
 ### スコープ外
 

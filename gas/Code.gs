@@ -1795,11 +1795,16 @@ function computeStatsFromIndex_(index, progressMap, band) {
     else reviewing++;
   });
 
+  const total = newCount + learning + reviewing + graduated;
+  const encountered = total - newCount;
+
   return {
     reviewing: reviewing + learning,
     graduated,
     learning,
     new: newCount,
+    total,
+    encountered,
   };
 }
 

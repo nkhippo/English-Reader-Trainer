@@ -40,6 +40,8 @@ export const translations = {
     suspend: 'Pause',
     timeRemaining: (sec) => `${sec}s left`,
     clozeReveal: 'Tap to reveal the hidden phrase',
+    progressFirstExposure: 'First exposure',
+    progressGraduation: 'Graduated',
   },
   ja: {
     reviewing: '復習中',
@@ -68,5 +70,7 @@ export const translations = {
     suspend: '中断',
     timeRemaining: (sec) => `残り ${sec} 秒`,
     clozeReveal: 'タップして隠れた語句を表示',
+    progressFirstExposure: '初回露出',
+    progressGraduation: '卒業',
   },
 };

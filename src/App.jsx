@@ -13,6 +13,7 @@ import { fetchSession, fetchStats } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
 import { pickUnseenBandTemplate } from './lib/localPassages.js';
+import { normalizeBandStats } from './lib/stats.js';
 import { USER_ID } from './lib/config.js';
 import { useI18n } from './i18n/I18nProvider.jsx';
 
@@ -39,16 +40,13 @@ export default function App() {
   const [passages, setPassages] = useState([]);
   const passagesRef = useRef(passages);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ reviewing: 0, graduated: 0 });
+  const [stats, setStats] = useState({ reviewing: 0, graduated: 0, total: 0, encountered: 0 });
   const advancePastEndRef = useRef(async () => false);
 
   const refreshStats = useCallback(async (band) => {
     try {
       const statsRes = await fetchStats({ userId: USER_ID, cefr: band });
-      setStats({
-        reviewing: statsRes.reviewing ?? 0,
-        graduated: statsRes.graduated ?? 0,
-      });
+      setStats(normalizeBandStats(statsRes));
     } catch (err) {
       console.error('[ERT] stats refresh failed:', err);
     }
@@ -66,10 +64,7 @@ export default function App() {
         let first = firstPassageFromResponse(sessionRes);
         if (!first) first = await pickUnseenBandTemplate(band, []);
         setPassages(first ? [first] : []);
-        setStats({
-          reviewing: sessionRes.reviewing ?? 0,
-          graduated: sessionRes.graduated ?? 0,
-        });
+        setStats(normalizeBandStats(sessionRes));
       } catch (err) {
         if (cancelled) return;
         console.error('[ERT] load failed:', err);
@@ -142,6 +137,8 @@ export default function App() {
         onCefrChange={handleCefrChange}
         reviewing={stats.reviewing}
         graduated={stats.graduated}
+        total={stats.total}
+        encountered={stats.encountered}
       />
 
       <ReadingTimerBar visible={reader.isReadingStarted} remainingSeconds={reader.remainingSeconds} />
