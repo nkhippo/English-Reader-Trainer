@@ -1259,8 +1259,10 @@ const PASSAGE_SYSTEM_PROMPT_ = [
   '',
   '6. REGISTER BY CEFR BAND.',
   '   - A1/A2: short concrete sentences; everyday scenes (home, shopping, travel, daily routine); present and past simple dominant.',
-  '   - B1: everyday plus light work and social topics; a wider range of connectors; some complex sentences.',
-  '   - B2: may include abstract or argumentative topics and a reporting register; richer cohesion.',
+  '   - B1: everyday plus light work and social topics; a wider range of connectors; some complex sentences; mix present, past, and past perfect.',
+  '   - B2: may include abstract or argumentative topics and a reporting register; richer cohesion; vary tense naturally.',
+  '',
+  '7. TENSE VARIETY. Learners must recognize chunks across tenses. When the user prompt specifies a past narrative frame, set the passage mainly in past simple and use past perfect where natural (e.g. "I had already… when…"). Conjugate each target chunk in the tense the sentence requires. Do not default every passage to present tense unless the scene truly calls for it.',
   '',
   'Output ONLY valid JSON (no markdown fences), in exactly this shape:',
   '{',
@@ -1281,11 +1283,20 @@ const PASSAGE_SYSTEM_PROMPT_ = [
   'char_start and char_end are 0-based, end-exclusive indices into the "text" field.',
 ].join('\n');
 
+/** ~30% of generated passages use past simple / past perfect as the main narrative frame. */
+function pickPassageTenseHint_() {
+  if (Math.random() < 0.30) {
+    return 'Narrative tense: set this passage mainly in the PAST — use past simple and, where natural, past perfect (e.g. "I had already… when…"). Conjugate each target chunk in the tense the sentence requires.';
+  }
+  return 'Narrative tense: present simple is fine for everyday scenes; use other tenses when they fit the scenario naturally.';
+}
+
 function buildPassageUserPrompt_(chunks, band, index, revisionHint) {
   const cefrHint = band === 'A1A2' ? 'A1/A2' : band;
   const lines = [
     `CEFR band: ${cefrHint}`,
     'Length: 3 to 6 sentences, 60 to 120 words total.',
+    pickPassageTenseHint_(),
     '',
     'Target chunks (embed ALL of them, each at least once):',
     '',
@@ -1951,9 +1962,9 @@ function getPassageTemplatesInline_(band) {
       {
         passage_id: 'ps_a1_01',
         cefr_band: 'A1A2',
-        text_markup: 'I walk into a small café near my house. I {{look at}} the menu on the wall and {{pick up}} a cup of hot tea. There are {{a lot of}} people here today, but the waiter smiles and helps me find a seat.',
-        ja_translation: '家の近くの小さなカフェに入る。壁のメニューを見て、温かいお茶を手に取る。今日はたくさん人がいるが、ウェイターは笑顔で席を見つけるのを手伝ってくれる。',
-        chunk_texts: ['look at', 'pick up', 'a lot of'],
+        text_markup: 'Yesterday I walked into a small café near my house. I {{looked at}} the menu on the wall and {{picked up}} a cup of hot tea. There were {{a lot of}} people that day, but the waiter smiled and helped me find a seat.',
+        ja_translation: '昨日、家の近くの小さなカフェに入った。壁のメニューを見て、温かいお茶を手に取った。その日はたくさん人がいたが、ウェイターは笑顔で席を見つけるのを手伝ってくれた。',
+        chunk_texts: ['looked at', 'picked up', 'a lot of'],
       },
       {
         passage_id: 'ps_a1_02',
@@ -2037,14 +2048,25 @@ function resolveChunkEn_(text, en) {
 /** Fallback glosses when chunks_master translations are not yet enriched. */
 var CHUNK_GLOSS_FALLBACKS_ = {
   'look at': { ja: '見る', en: 'to direct your eyes toward something' },
+  'looked at': { ja: '見た', en: 'to direct your eyes toward something' },
   'pick up': { ja: '手に取る', en: 'to lift or take something with your hands' },
   'a lot of': { ja: 'たくさんの', en: 'many; a large amount of' },
   'get up': { ja: '起きる', en: 'to rise from bed or a seated position' },
+  'got up': { ja: '起きた', en: 'to rise from bed or a seated position' },
   'go out': { ja: '外出する', en: 'to leave home for an activity' },
+  'went out': { ja: '外出した', en: 'to leave home for an activity' },
   'a little': { ja: '少し', en: 'a small amount; slightly' },
   'turn on': { ja: 'つける／オンにする', en: 'to switch on (a light, device, etc.)' },
+  'turned on': { ja: 'つけた／オンにした', en: 'to switch on (a light, device, etc.)' },
   'sit down': { ja: '座る', en: 'to take a seat' },
+  'sat down': { ja: '座った', en: 'to take a seat' },
   'a few': { ja: 'いくつかの／少しの', en: 'a small number of' },
+  'wake up': { ja: '目を覚ます／起きる', en: 'to stop sleeping; to get out of bed' },
+  'woke up': { ja: '目を覚ました／起きた', en: 'to stop sleeping; to get out of bed' },
+  'look for': { ja: '探す', en: 'to try to find something' },
+  'looked for': { ja: '探した', en: 'to try to find something' },
+  'come back': { ja: '戻ってくる', en: 'to return to a place' },
+  'came back': { ja: '戻ってきた', en: 'to return to a place' },
   'managed to': { ja: 'なんとか〜することができた', en: 'to succeed in doing something difficult' },
   'picked up': { ja: '手に取る／拾い上げる', en: 'to take hold of; to collect' },
   'turned out': { ja: '結果的に〜だった／判明した', en: 'to prove to be; to end up being' },

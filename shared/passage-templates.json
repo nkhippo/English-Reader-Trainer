@@ -3,9 +3,9 @@
     {
       "passage_id": "ps_a1_01",
       "cefr_band": "A1A2",
-      "text_markup": "I walk into a small café near my house. I {{look at}} the menu on the wall and {{pick up}} a cup of hot tea. There are {{a lot of}} people here today, but the waiter smiles and helps me find a seat.",
-      "ja_translation": "家の近くの小さなカフェに入る。壁のメニューを見て、温かいお茶を手に取る。今日はたくさん人がいるが、ウェイターは笑顔で席を見つけるのを手伝ってくれる。",
-      "chunk_texts": ["look at", "pick up", "a lot of"]
+      "text_markup": "Yesterday I walked into a small café near my house. I {{looked at}} the menu on the wall and {{picked up}} a cup of hot tea. There were {{a lot of}} people that day, but the waiter smiled and helped me find a seat.",
+      "ja_translation": "昨日、家の近くの小さなカフェに入った。壁のメニューを見て、温かいお茶を手に取った。その日はたくさん人がいたが、ウェイターは笑顔で席を見つけるのを手伝ってくれた。",
+      "chunk_texts": ["looked at", "picked up", "a lot of"]
     },
     {
       "passage_id": "ps_a1_02",
@@ -17,16 +17,16 @@
     {
       "passage_id": "ps_a1_03",
       "cefr_band": "A1A2",
-      "text_markup": "It is late at night. I {{turn on}} the light in my room and {{sit down}} at my desk. I have {{a few}} books to read tonight. I want to finish them before I go to bed.",
-      "ja_translation": "夜遅い。部屋の明かりをつけて、机に座る。今夜読む本が数冊ある。寝る前に読み終えたい。",
-      "chunk_texts": ["turn on", "sit down", "a few"]
+      "text_markup": "It was late at night. I had already had dinner when I {{turned on}} the light in my room and {{sat down}} at my desk. I still had {{a few}} books I wanted to finish before bed.",
+      "ja_translation": "夜遅かった。すでに夕食を済ませたあと、部屋の明かりをつけて机に座った。寝る前に読み終えたい本がまだ数冊あった。",
+      "chunk_texts": ["turned on", "sat down", "a few"]
     },
     {
       "passage_id": "ps_a1_04",
       "cefr_band": "A1A2",
-      "text_markup": "After school, I {{go out}} with my friend. We {{look at}} the shop windows and {{pick up}} some bread for dinner. There are {{a lot of}} students on the street today.",
-      "ja_translation": "放課後、友だちと外出する。店の窓を見て、夕食のパンを手に取る。今日は通りにたくさんの学生がいる。",
-      "chunk_texts": ["go out", "look at", "pick up", "a lot of"]
+      "text_markup": "After school yesterday, I {{went out}} with my friend. We {{looked at}} the shop windows and {{picked up}} some bread for dinner. There were {{a lot of}} students on the street that evening.",
+      "ja_translation": "昨日の放課後、友だちと外出した。店の窓を見て、夕食のパンを手に取った。その夕方、通りにはたくさんの学生がいた。",
+      "chunk_texts": ["went out", "looked at", "picked up", "a lot of"]
     },
     {
       "passage_id": "ps_a1_05",
@@ -45,9 +45,9 @@
     {
       "passage_id": "ps_a1_07",
       "cefr_band": "A1A2",
-      "text_markup": "It is raining, so we stay home. I {{pick up}} a novel and {{sit down}} by the window. After {{a little}} while, the sun comes out again.",
-      "ja_translation": "雨が降っているので家にいる。小説を手に取って窓際に座る。少しして、また日が出る。",
-      "chunk_texts": ["pick up", "sit down", "a little"]
+      "text_markup": "Last Sunday it was raining, so we stayed home. I {{picked up}} a novel and {{sat down}} by the window. After {{a little}} while, the sun came out again.",
+      "ja_translation": "先週の日曜日は雨が降っていたので家にいた。小説を手に取って窓際に座った。少しして、また日が出た。",
+      "chunk_texts": ["picked up", "sat down", "a little"]
     },
     {
       "passage_id": "ps_a1_08",
@@ -59,9 +59,9 @@
     {
       "passage_id": "ps_a1_09",
       "cefr_band": "A1A2",
-      "text_markup": "I come home tired. I {{turn on}} a lamp and {{sit down}} to rest. I read {{a few}} pages, then I go to bed.",
-      "ja_translation": "疲れて家に帰る。ランプをつけて座って休む。数ページ読んでから寝る。",
-      "chunk_texts": ["turn on", "sit down", "a few"]
+      "text_markup": "I came home tired last night. I {{turned on}} a lamp and {{sat down}} to rest. I read {{a few}} pages, then I went to bed.",
+      "ja_translation": "昨夜、疲れて家に帰った。ランプをつけて座って休んだ。数ページ読んでから寝た。",
+      "chunk_texts": ["turned on", "sat down", "a few"]
     },
     {
       "passage_id": "ps_a1_10",
@@ -73,9 +73,9 @@
     {
       "passage_id": "ps_a1_11",
       "cefr_band": "A1A2",
-      "text_markup": "I {{wake up}} late and cannot {{look for}} my keys. At noon my brother {{come back}} home and helps me search the kitchen.",
-      "ja_translation": "遅く起きて、鍵が見つからない。正午ごろ兄が家に戻ってきて、キッチンを一緒に探してくれる。",
-      "chunk_texts": ["wake up", "look for", "come back"]
+      "text_markup": "I {{woke up}} late yesterday and {{looked for}} my keys, but I could not find them. By noon my brother {{came back}} home and helped me search the kitchen.",
+      "ja_translation": "昨日遅く起きて、鍵が見つからなかった。正午ごろ兄が家に戻ってきて、キッチンを一緒に探してくれた。",
+      "chunk_texts": ["woke up", "looked for", "came back"]
     },
     {
       "passage_id": "ps_a1_12",
