@@ -694,14 +694,11 @@ html[lang='ja'] .note__meta {
   flex-shrink: 0;
 }
 
-.footer--processing {
-  pointer-events: none;
-}
-
 .processing-overlay {
   position: fixed;
   inset: 0;
-  z-index: 110;
+  bottom: var(--footer-offset);
+  z-index: 100;
   display: flex;
   align-items: center;
   justify-content: center;

@@ -14,7 +14,6 @@ export function Footer({
   const { t } = useI18n();
   const [optimisticProcessing, setOptimisticProcessing] = useState(false);
   const showProcessing = isProcessing || optimisticProcessing;
-  const footerClass = showProcessing ? 'footer footer--processing' : 'footer';
 
   useEffect(() => {
     if (!isProcessing) setOptimisticProcessing(false);
@@ -33,7 +32,7 @@ export function Footer({
   }, [actionsDisabled, onGotIt, optimisticProcessing]);
 
   return (
-    <footer className={footerClass}>
+    <footer className="footer">
       <div className="footer__left">
         <button
           className={`btn btn--ghost ${hardFlash ? 'btn--hard-flash' : ''}`}
