@@ -6,7 +6,7 @@ const READING_TIME_LIMIT_MS = READING_TIME_LIMIT_SEC * 1000;
 const TRANSITION_MS = 200;
 const ACTION_LOCK_TIMEOUT_MS = 12000;
 
-export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {}) {
+export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePastEnd } = {}) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [activeChunkId, setActiveChunkId] = useState(null);
   const [marginaliaOpen, setMarginaliaOpen] = useState(false);
@@ -36,6 +36,11 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
 
   const passage = passages[currentIndex] ?? null;
   const canInteract = isReadingStarted && !awaitingStart && !isPaused;
+
+  const passageCount = useCallback(
+    () => passagesRef?.current?.length ?? passages.length,
+    [passages.length, passagesRef],
+  );
 
   const syncRemainingSeconds = useCallback((seconds) => {
     remainingSecondsRef.current = seconds;
@@ -125,23 +130,29 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
 
   const transitionTo = useCallback(
     (newIndex, direction, { autoStart = false } = {}) => {
-      if (newIndex < 0 || newIndex >= passages.length || newIndex === currentIndex) return false;
-      setTransitionDirection(direction);
-      setIsTransitioning(true);
-      setTimeout(() => {
-        setCurrentIndex(newIndex);
-        applyAfterTransition(autoStart);
-        setIsTransitioning(false);
-        setTransitionDirection(null);
-      }, TRANSITION_MS);
-      return true;
+      const count = passageCount();
+      if (newIndex < 0 || newIndex >= count || newIndex === currentIndex) {
+        return Promise.resolve(false);
+      }
+
+      return new Promise((resolve) => {
+        setTransitionDirection(direction);
+        setIsTransitioning(true);
+        setTimeout(() => {
+          setCurrentIndex(newIndex);
+          applyAfterTransition(autoStart);
+          setIsTransitioning(false);
+          setTransitionDirection(null);
+          resolve(true);
+        }, TRANSITION_MS);
+      });
     },
-    [applyAfterTransition, currentIndex, passages.length],
+    [applyAfterTransition, currentIndex, passageCount],
   );
 
   const advanceToNext = useCallback(
     async ({ autoStart = false } = {}) => {
-      if (currentIndex + 1 < passages.length) {
+      if (currentIndex + 1 < passageCount()) {
         return transitionTo(currentIndex + 1, 'next', { autoStart });
       }
       if (!onAdvancePastEnd) {
@@ -149,23 +160,15 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
         return false;
       }
 
-      const added = await onAdvancePastEnd();
-      if (!added) {
+      const nextIndex = await onAdvancePastEnd();
+      if (nextIndex == null || nextIndex < 0) {
         if (!autoStart) resetReadingTimer();
         return false;
       }
 
-      setTransitionDirection('next');
-      setIsTransitioning(true);
-      setTimeout(() => {
-        setCurrentIndex((i) => i + 1);
-        applyAfterTransition(autoStart);
-        setIsTransitioning(false);
-        setTransitionDirection(null);
-      }, TRANSITION_MS);
-      return true;
+      return transitionTo(nextIndex, 'next', { autoStart });
     },
-    [applyAfterTransition, currentIndex, onAdvancePastEnd, passages.length, resetReadingTimer, transitionTo],
+    [currentIndex, onAdvancePastEnd, passageCount, resetReadingTimer, transitionTo],
   );
 
   const releaseActionLock = useCallback(() => {
@@ -173,12 +176,14 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
     actionLockTimerRef.current = null;
     actionPendingRef.current = false;
     setActionsDisabled(false);
+    setIsSaving(false);
   }, []);
 
   const beginAction = useCallback(() => {
     if (actionPendingRef.current) return false;
     actionPendingRef.current = true;
     setActionsDisabled(true);
+    setIsSaving(true);
     clearTimeout(actionLockTimerRef.current);
     actionLockTimerRef.current = setTimeout(() => {
       console.warn('[ERT] action lock timed out — releasing overlay');
@@ -249,46 +254,43 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
       resetMarginalia();
       recordEncounter(signal);
       const autoStart = !pauseAfterActionRef.current;
+      let advanced = false;
       try {
-        await advanceToNext({ autoStart });
+        advanced = await advanceToNext({ autoStart });
       } finally {
         pauseAfterActionRef.current = false;
         setPauseAfterAction(false);
       }
+      if (!advanced) {
+        releaseActionLock();
+        activateTimer({ resume: true });
+      }
     },
-    [advanceToNext, recordEncounter, resetMarginalia, stopTimer],
+    [activateTimer, advanceToNext, recordEncounter, releaseActionLock, resetMarginalia, stopTimer],
   );
 
   const handleGotIt = useCallback(async () => {
-    if (!canInteract || actionPendingRef.current) return;
-    actionPendingRef.current = true;
-    setActionsDisabled(true);
-    setIsSaving(true);
+    if (!canInteract || !beginAction()) return;
     try {
       await finishPassageAction('got_it');
-    } finally {
-      actionPendingRef.current = false;
-      setActionsDisabled(false);
-      setIsSaving(false);
+    } catch (err) {
+      console.error('[ERT] got_it failed:', err);
+      releaseActionLock();
     }
-  }, [canInteract, finishPassageAction]);
+  }, [beginAction, canInteract, finishPassageAction, releaseActionLock]);
 
   const handleStillHard = useCallback(async () => {
-    if (!canInteract || actionPendingRef.current) return;
-    actionPendingRef.current = true;
-    setActionsDisabled(true);
-    setIsSaving(true);
+    if (!canInteract || !beginAction()) return;
     try {
       await finishPassageAction('still_hard');
-    } finally {
-      actionPendingRef.current = false;
-      setActionsDisabled(false);
-      setIsSaving(false);
+    } catch (err) {
+      console.error('[ERT] still_hard failed:', err);
+      releaseActionLock();
     }
     setHardFlash(true);
     await new Promise((resolve) => setTimeout(resolve, 240));
     setHardFlash(false);
-  }, [canInteract, finishPassageAction]);
+  }, [beginAction, canInteract, finishPassageAction, releaseActionLock]);
 
   const selectChunk = useCallback(
     (chunkId) => {

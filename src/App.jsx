@@ -23,13 +23,15 @@ function firstPassageFromResponse(res) {
   return null;
 }
 
-function appendPassage(setPassages, next) {
+function appendPassage(setPassages, passagesRef, next) {
   if (!next) return false;
   let added = false;
   setPassages((prev) => {
     if (prev.some((p) => p.id === next.id)) return prev;
     added = true;
-    return [...prev, next];
+    const updated = [...prev, next];
+    passagesRef.current = updated;
+    return updated;
   });
   return added;
 }
@@ -90,6 +92,7 @@ export default function App() {
   }, [cefrBand, refreshStats]);
 
   const reader = useReader(passages, {
+    passagesRef,
     onProgressUpdate: handleProgressUpdate,
     onAdvancePastEnd: () => advancePastEndRef.current(),
   });
@@ -105,15 +108,17 @@ export default function App() {
       const seenIds = passagesRef.current.map((p) => p.id);
 
       const queued = takeQueuedPassage();
-      if (queued && appendPassage(setPassages, queued)) return true;
-
-      const local = await pickUnseenBandTemplate(cefrBand, seenIds);
-      if (local && appendPassage(setPassages, local)) {
-        fillQueue();
-        return true;
+      if (queued && appendPassage(setPassages, passagesRef, queued)) {
+        return passagesRef.current.length - 1;
       }
 
-      return false;
+      const local = await pickUnseenBandTemplate(cefrBand, seenIds);
+      if (local && appendPassage(setPassages, passagesRef, local)) {
+        fillQueue();
+        return passagesRef.current.length - 1;
+      }
+
+      return null;
     };
   }, [cefrBand, fillQueue, takeQueuedPassage]);
 
