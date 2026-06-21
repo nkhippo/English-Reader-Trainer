@@ -29,7 +29,7 @@ English Reader Trainer は **SLA（第二言語習得）原理に基づくチャ
 | `generateTemplateBatch_()` | ⬜ enrich 完走後 |
 | 固定テンプレ 45 本の差し替え | ⬜ サンプルレビュー後 |
 
-**GAS Web App:** `https://script.google.com/macros/s/AKfycbwD7efBVsO79eP5AH3O2kYp1gYGOuzFIxdZPXhDEFux2gPTKQ2PYFzETztAK_DeXkyd/exec`
+**GAS Web App:** `https://script.google.com/macros/s/AKfycbz7RTxdMHXOguSFB07kmlhcB3uFixN1zUfrQ2mxfubIuq-ytWDo7V1VPc1un3ux33fk/exec`
 
 ---
 
