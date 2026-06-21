@@ -5,7 +5,7 @@ import { CLOZE_PROBABILITY, READING_TIME_LIMIT_SEC, USER_ID } from '../lib/confi
 
 const READING_TIME_LIMIT_MS = READING_TIME_LIMIT_SEC * 1000;
 const TRANSITION_MS = 200;
-const ACTION_LOCK_TIMEOUT_MS = 12000;
+const ACTION_LOCK_TIMEOUT_MS = 15000;
 /** Keep processing UI visible long enough to notice (avoids sub-frame flash). */
 const MIN_PROCESSING_MS = 400;
 
@@ -33,6 +33,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   const actionPendingRef = useRef(false);
   const actionLockTimerRef = useRef(null);
   const actionStartedAtRef = useRef(0);
+  const actionGenerationRef = useRef(0);
   const currentIndexRef = useRef(0);
   const pauseAfterActionRef = useRef(false);
   const [pauseAfterAction, setPauseAfterAction] = useState(false);
@@ -223,9 +224,22 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     setIsSaving(false);
   }, []);
 
+  const recoverFromActionTimeout = useCallback(
+    (gen) => {
+      if (actionGenerationRef.current !== gen) return;
+      console.warn('[ERT] action lock timed out — recovering');
+      actionGenerationRef.current += 1;
+      releaseActionLock();
+      activateTimer({ resume: true });
+    },
+    [activateTimer, releaseActionLock],
+  );
+
   const beginAction = useCallback(() => {
     if (actionPendingRef.current) return false;
     if (!passage?.id) return false;
+    const gen = actionGenerationRef.current + 1;
+    actionGenerationRef.current = gen;
     actionPendingRef.current = true;
     actionStartedAtRef.current = Date.now();
     flushSync(() => {
@@ -234,11 +248,10 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     });
     clearTimeout(actionLockTimerRef.current);
     actionLockTimerRef.current = setTimeout(() => {
-      console.warn('[ERT] action lock timed out — releasing overlay');
-      releaseActionLock();
+      recoverFromActionTimeout(gen);
     }, ACTION_LOCK_TIMEOUT_MS);
     return true;
-  }, [passage, releaseActionLock]);
+  }, [passage, recoverFromActionTimeout]);
 
   const prevPassage = useCallback(() => {
     transitionTo(currentIndex - 1, 'prev');
@@ -298,6 +311,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
 
   const finishPassageAction = useCallback(
     async (signal) => {
+      const gen = actionGenerationRef.current;
       stopTimer();
       resetMarginalia();
       recordEncounter(signal);
@@ -305,22 +319,25 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       try {
         let advanced = false;
         for (let attempt = 0; attempt < 2 && !advanced; attempt += 1) {
+          if (actionGenerationRef.current !== gen) break;
           advanced = await advanceToNextInternal({ autoStart });
           if (!advanced && attempt === 0) {
             await new Promise((resolve) => setTimeout(resolve, 50));
           }
         }
-        if (!advanced) {
+        if (actionGenerationRef.current === gen && !advanced) {
           console.warn('[ERT] could not advance to next passage');
           activateTimer({ resume: true });
         }
       } finally {
+        if (actionGenerationRef.current !== gen) return;
         pauseAfterActionRef.current = false;
         setPauseAfterAction(false);
         const waitMs = MIN_PROCESSING_MS - (Date.now() - actionStartedAtRef.current);
         if (waitMs > 0) {
           await new Promise((resolve) => setTimeout(resolve, waitMs));
         }
+        if (actionGenerationRef.current !== gen) return;
         releaseActionLock();
       }
     },

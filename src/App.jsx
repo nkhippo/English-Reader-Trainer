@@ -95,7 +95,7 @@ export default function App() {
     onAdvancePastEnd: () => advancePastEndRef.current(),
   });
 
-  const { consumePrefetched, fillQueue } = usePassagePrefetch({
+  const { consumePrefetched, takeQueuedPassage, fillQueue } = usePassagePrefetch({
     cefrBand,
     seenPassageIds: passages.map((p) => p.id),
     enabled: !loading && passages.length > 0,
@@ -105,12 +105,13 @@ export default function App() {
     advancePastEndRef.current = async () => acquireNextPassageIndex({
       passagesRef,
       setPassages,
+      takeQueuedPassage,
       consumePrefetched,
       fillQueue,
       pickLocal: (seenIds) => pickUnseenBandTemplate(cefrBand, seenIds),
       fetchRemote: (seenIds) => fetchRemotePassage(cefrBand, seenIds),
     });
-  }, [cefrBand, consumePrefetched, fillQueue]);
+  }, [cefrBand, consumePrefetched, fillQueue, takeQueuedPassage]);
 
   const handleCefrChange = (band) => {
     storeCefrBand(band);

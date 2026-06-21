@@ -20,6 +20,12 @@ export function Footer({
     if (!isProcessing) setOptimisticProcessing(false);
   }, [isProcessing]);
 
+  useEffect(() => {
+    if (!optimisticProcessing) return undefined;
+    const timer = setTimeout(() => setOptimisticProcessing(false), 15000);
+    return () => clearTimeout(timer);
+  }, [optimisticProcessing]);
+
   const handleGotIt = useCallback(() => {
     if (actionsDisabled || optimisticProcessing) return;
     setOptimisticProcessing(true);
