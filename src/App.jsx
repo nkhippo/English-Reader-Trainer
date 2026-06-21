@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MOCK_PASSAGES } from './data/mockPassages.js';
 import { useReader } from './hooks/useReader.js';
 import { usePassagePrefetch } from './hooks/usePassagePrefetch.js';
 import { Header } from './components/Header.jsx';
@@ -13,33 +12,25 @@ import { StartReadingOverlay } from './components/StartReadingOverlay.jsx';
 import { fetchSession, fetchStats } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
+import { pickUnseenBandTemplate } from './lib/localPassages.js';
 import { USER_ID } from './lib/config.js';
-import { withTimeout } from './lib/async.js';
 import { useI18n } from './i18n/I18nProvider.jsx';
 
-const ADVANCE_PREFETCH_TIMEOUT_MS = 8000;
-
-function filterMockByBand(band) {
-  if (band === 'A1A2') {
-    return MOCK_PASSAGES.filter((p) => p.chunks.some((c) => c.cefr === 'A1' || c.cefr === 'A2'));
-  }
-  if (band === 'B2') {
-    return MOCK_PASSAGES.filter((p) => p.chunks.some((c) => c.cefr === 'B2'));
-  }
-  return MOCK_PASSAGES.filter((p) => p.cefr === 'B1' || band === 'B1');
-}
-
-function firstPassageFromResponse(res, band) {
+function firstPassageFromResponse(res) {
   const normalized = normalizePassagesFromApi(res.passages || []);
   if (normalized.length > 0) return normalized[0];
-  return filterMockByBand(band)[0] ?? null;
+  return null;
 }
 
-function pickUnseenMockPassage(band, seenIds) {
-  const seen = new Set(seenIds);
-  const candidates = filterMockByBand(band).filter((p) => !seen.has(p.id));
-  if (candidates.length === 0) return null;
-  return candidates[Math.floor(Math.random() * candidates.length)];
+function appendPassage(setPassages, next) {
+  if (!next) return false;
+  let added = false;
+  setPassages((prev) => {
+    if (prev.some((p) => p.id === next.id)) return prev;
+    added = true;
+    return [...prev, next];
+  });
+  return added;
 }
 
 export default function App() {
@@ -72,8 +63,9 @@ export default function App() {
         const sessionRes = await fetchSession({ userId: USER_ID, cefr: band });
         if (cancelled) return;
 
-        const first = firstPassageFromResponse(sessionRes, band);
-        setPassages(first ? [first] : filterMockByBand(band).slice(0, 1));
+        let first = firstPassageFromResponse(sessionRes);
+        if (!first) first = await pickUnseenBandTemplate(band, []);
+        setPassages(first ? [first] : []);
         setStats({
           reviewing: sessionRes.reviewing ?? 0,
           graduated: sessionRes.graduated ?? 0,
@@ -81,8 +73,8 @@ export default function App() {
       } catch (err) {
         if (cancelled) return;
         console.error('[ERT] load failed:', err);
-        const mock = filterMockByBand(band);
-        setPassages(mock.length > 0 ? [mock[0]] : []);
+        const fallback = await pickUnseenBandTemplate(band, []);
+        setPassages(fallback ? [fallback] : []);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -107,7 +99,7 @@ export default function App() {
     onAdvancePastEnd: () => advancePastEndRef.current(),
   });
 
-  const { consumePrefetched } = usePassagePrefetch({
+  const { takeQueuedPassage, fillQueue } = usePassagePrefetch({
     cefrBand,
     seenPassageIds: passages.map((p) => p.id),
     enabled: !loading && passages.length > 0,
@@ -116,28 +108,19 @@ export default function App() {
   useEffect(() => {
     advancePastEndRef.current = async () => {
       const seenIds = passagesRef.current.map((p) => p.id);
-      let next = null;
-      try {
-        next = await withTimeout(
-          consumePrefetched(),
-          ADVANCE_PREFETCH_TIMEOUT_MS,
-          'prefetch next passage',
-        );
-      } catch (err) {
-        console.warn('[ERT] prefetch timed out or failed:', err);
-      }
-      if (!next) {
-        next = pickUnseenMockPassage(cefrBand, seenIds);
-      }
-      if (!next || seenIds.includes(next.id)) return false;
 
-      setPassages((prev) => {
-        if (prev.some((p) => p.id === next.id)) return prev;
-        return [...prev, next];
-      });
-      return true;
+      const queued = takeQueuedPassage();
+      if (queued && appendPassage(setPassages, queued)) return true;
+
+      const local = await pickUnseenBandTemplate(cefrBand, seenIds);
+      if (local && appendPassage(setPassages, local)) {
+        fillQueue();
+        return true;
+      }
+
+      return false;
     };
-  }, [cefrBand, consumePrefetched]);
+  }, [cefrBand, fillQueue, takeQueuedPassage]);
 
   const handleCefrChange = (band) => {
     storeCefrBand(band);
@@ -207,7 +190,7 @@ export default function App() {
 
       <TranslationOverlay text={reader.passage?.ja ?? ''} visible={reader.translationVisible} />
 
-      <ProcessingOverlay visible={reader.actionsDisabled} pauseQueued={reader.pauseAfterAction} />
+      <ProcessingOverlay visible={reader.isSaving} pauseQueued={reader.pauseAfterAction} />
     </div>
   );
 }

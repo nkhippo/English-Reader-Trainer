@@ -16,7 +16,7 @@ After setup, press **Got it** or **Still hard** and confirm rows appear in the `
 
 | Resource | URL / ID |
 |----------|----------|
-| GAS Web App | `https://script.google.com/macros/s/AKfycbzePqBlIiQnIffrXAY_HhcjWj8cCIdZGv9SlV4opdjVr8_9edL73qURuggwOO0Ce74/exec` |
+| GAS Web App | `https://script.google.com/macros/s/AKfycbxITy29XYk9PWuBRlJuPtG9VGsBr83DO_VpQwqj9fMDAwWUAOQ6Nzfh7iJ35brbXjQX/exec` |
 | Spreadsheet | [English Reader Trainer](https://docs.google.com/spreadsheets/d/1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw/edit) — ID: `1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw` |
 | Drive root | [EnglishReaderTrainer](https://drive.google.com/drive/folders/1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI) — ID: `1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI` |
 
@@ -67,7 +67,7 @@ See the work-request document (§3.1) for full column definitions.
   /passages/     ← generated passage JSON (Phase 4)
   /audio/        ← TTS mp3 cache (Phase 5)
   /manifest/     ← audio_manifest.json (shared with Listening Trainer)
-  /shared/       ← cefr_words.json, cefr_chunks.json ✅ uploaded
+  /shared/       ← cefr_words.json, cefr_chunks.json, passage-templates.json ✅
 ```
 
 ## Phase 2: CEFR import & translations
@@ -166,14 +166,44 @@ If `encounter_log` has rows but `user_progress` is empty, run **`rebuildUserProg
 
 SRS rules (§4.2): got_it → stage+1, still_hard → stage−1, passive → +1 day, graduated at 5 encounters × 3 passages.
 
-## Phase 4: Dynamic passage generation
+## Phase 4: Passage generation (template / hybrid / dynamic)
 
-1. Copy latest `gas/Code.gs` and redeploy Web App.
-2. Add Script Property: `USE_DYNAMIC_PASSAGES` = `true` (omit or `false` for template rotation only).
-3. `ANTHROPIC_API_KEY` must be set (same key as translation batch).
-4. Generated passages are saved to Drive `passages/` and registered in `passages_meta`.
+### Passage modes (`USE_DYNAMIC_PASSAGES`)
 
-Without the flag, the app rotates fixed templates indefinitely (no session end). With the flag, `/generate_passage` and `/session` call Claude using `due_chunks` selection.
+| Value | Behavior |
+|-------|----------|
+| *(omit or `false`)* | **Template only** — rotate fixed templates |
+| `hybrid` | **Recommended** — cache → template covering due chunks → Claude only when a chunk needs new context |
+| `true` | **Dynamic only** — always try Claude first (falls back to template on error) |
+
+Set in Apps Script → Project Settings → Script properties.
+
+### 1. Upload passage templates (recommended)
+
+Place `shared/passage-templates.json` in Drive `/EnglishReaderTrainer/shared/` (10 templates per band: A1A2, B1, B2).
+
+The frontend bundles the same JSON for **instant local fallback** when you tap **Got it** / **Still hard**. GAS loads it from Drive when serving `/session` and `/generate_passage`; if missing, inline fallback (3 per band) is used.
+
+### 2. Redeploy GAS
+
+1. Copy latest `gas/Code.gs` into your Apps Script project.
+2. **Deploy** → Manage deployments → Edit → **New version** → Deploy.
+
+### 3. Enable hybrid (recommended)
+
+```
+USE_DYNAMIC_PASSAGES = hybrid
+```
+
+`ANTHROPIC_API_KEY` must be set. Hybrid calls Claude only when due chunks are **new** or have appeared in **fewer than 3 distinct passages** — otherwise it serves cached or template passages (fast, no API cost).
+
+### 4. Frontend behavior (no GAS wait on advance)
+
+- Prefetches **3** passages in the background while you read.
+- On **Got it** / **Still hard**: shows next passage from prefetch queue, else a local template (~instant), then refills the queue via GAS in the background.
+- Processing overlay lasts only the ~200ms page transition, not the GAS round-trip.
+
+Generated passages are saved to Drive `passages/` and registered in `passages_meta`.
 
 ## Local Development
 

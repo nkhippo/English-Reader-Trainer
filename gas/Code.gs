@@ -850,25 +850,136 @@ function handleSession_(body) {
   const band = normalizeCefrBand_(body.cefr || 'B1');
   const index = loadChunksIndex_();
   const progressMap = loadUserProgressMap_(userId);
-  const excludePassageIds = getRecentPassageIds_(userId, 24);
+  const excludePassageIds = mergeExcludePassageIds_(userId, body.exclude_passage_ids);
   const passage = buildPassageForUser_(userId, band, index, progressMap, excludePassageIds);
   const stats = computeStatsFromIndex_(index, progressMap, band);
   return { passages: [passage], cefr_band: band, ...stats };
 }
 
+function getPassageMode_() {
+  const v = String(
+    PropertiesService.getScriptProperties().getProperty('USE_DYNAMIC_PASSAGES') || '',
+  ).toLowerCase();
+  if (v === 'true') return 'dynamic';
+  if (v === 'hybrid') return 'hybrid';
+  return 'template';
+}
+
 function buildPassageForUser_(userId, band, index, progressMap, excludePassageIds) {
-  if (isDynamicPassagesEnabled_()) {
-    try {
-      return generateDynamicPassage_(userId, band, index, progressMap, excludePassageIds);
-    } catch (err) {
-      Logger.log('Dynamic passage failed, using template: ' + err);
+  const mode = getPassageMode_();
+  if (mode === 'template') {
+    return pickTemplatePassage_(band, index, progressMap, excludePassageIds);
+  }
+
+  const dueData = handleDueChunks_({ user_id: userId, cefr: band, limit: 20 });
+  const chunks = selectChunksForPassage_(dueData, progressMap, index, band);
+
+  if (mode === 'hybrid') {
+    if (chunks.length >= 2) {
+      const cacheKey = chunksCacheKey_(chunks);
+      const cached = findCachedPassage_(cacheKey, index, band, progressMap, excludePassageIds);
+      if (cached) return cached;
+
+      const tpl = pickTemplateCoveringChunks_(band, index, progressMap, excludePassageIds, chunks);
+      if (tpl) return tpl;
     }
+
+    if (needsNewPassageContext_(chunks, progressMap)) {
+      try {
+        return generateDynamicPassageClaude_(userId, band, index, progressMap, excludePassageIds, chunks);
+      } catch (err) {
+        Logger.log('Hybrid Claude generation failed: ' + err);
+      }
+    }
+
+    return pickTemplatePassage_(band, index, progressMap, excludePassageIds);
+  }
+
+  try {
+    return generateDynamicPassage_(userId, band, index, progressMap, excludePassageIds);
+  } catch (err) {
+    Logger.log('Dynamic passage failed, using template: ' + err);
   }
   return pickTemplatePassage_(band, index, progressMap, excludePassageIds);
 }
 
 function isDynamicPassagesEnabled_() {
-  return PropertiesService.getScriptProperties().getProperty('USE_DYNAMIC_PASSAGES') === 'true';
+  return getPassageMode_() === 'dynamic';
+}
+
+function pickTemplateCoveringChunks_(band, index, progressMap, excludePassageIds, chunks) {
+  const chunkTexts = {};
+  chunks.forEach((c) => { chunkTexts[String(c.text).toLowerCase().trim()] = true; });
+  const exclude = {};
+  (excludePassageIds || []).forEach((id) => { exclude[id] = true; });
+
+  const templates = getPassageTemplatesForBand_(band);
+  let best = null;
+  let bestScore = 0;
+
+  templates.forEach((tpl) => {
+    if (exclude[tpl.passage_id]) return;
+    const texts = tpl.chunk_texts || [];
+    let score = 0;
+    texts.forEach((text) => {
+      if (chunkTexts[String(text).toLowerCase().trim()]) score += 1;
+    });
+    if (score > bestScore) {
+      bestScore = score;
+      best = tpl;
+    }
+  });
+
+  if (!best || bestScore === 0) return null;
+  return enrichPassageTemplate_(best, index, band, progressMap);
+}
+
+function needsNewPassageContext_(chunks, progressMap) {
+  if (!chunks || chunks.length === 0) return false;
+  return chunks.some((c) => {
+    const prog = progressMap[c.chunk_id];
+    if (!prog) return true;
+    if (prog.status === 'new' || prog.srs_stage === 0) return true;
+    return prog.distinct_passages_count < 3;
+  });
+}
+
+function generateDynamicPassageClaude_(userId, band, index, progressMap, excludePassageIds, chunks) {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
+  if (!chunks || chunks.length < 2) {
+    chunks = selectChunksForPassage_(
+      handleDueChunks_({ user_id: userId, cefr: band, limit: 20 }),
+      progressMap,
+      index,
+      band,
+    );
+  }
+  if (chunks.length < 2) throw new Error('Not enough chunks to generate passage');
+
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const generated = callClaudeGeneratePassage_(chunks, band, apiKey);
+      if (!validatePassageChunks_(generated.text, chunks)) {
+        throw new Error('Generated passage missing target chunks');
+      }
+      if (!validatePassageQuality_(generated)) {
+        throw new Error('Generated passage failed quality checks');
+      }
+      const passage = buildPassageOutput_(generated, chunks, index, band, progressMap);
+      if (excludePassageIds.indexOf(passage.passage_id) >= 0) {
+        passage.passage_id = makePassageId_(chunks);
+      }
+      savePassageToDrive_(passage);
+      registerPassageMeta_(passage, chunks);
+      return passage;
+    } catch (err) {
+      lastErr = err;
+      Utilities.sleep(400);
+    }
+  }
+  throw lastErr || new Error('Passage generation failed');
 }
 
 function getRecentPassageIds_(userId, hours) {
@@ -1275,6 +1386,17 @@ function handleStats_(body) {
 // ===== Passage templates (Phase 2 — Phase 4 replaces with Claude generation) =====
 
 function getPassageTemplatesForBand_(band) {
+  try {
+    const all = readSharedJson_('passage-templates.json');
+    if (all[band] && all[band].length) return all[band];
+  } catch (err) {
+    Logger.log('passage-templates.json not loaded, using inline fallback: ' + err);
+  }
+  return getPassageTemplatesInline_(band);
+}
+
+/** Legacy inline templates (fallback if shared/passage-templates.json is not on Drive). */
+function getPassageTemplatesInline_(band) {
   const T = {
     A1A2: [
       {

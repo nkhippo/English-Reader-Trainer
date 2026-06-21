@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { fetchGeneratePassage } from '../lib/api.js';
+import { PREFETCH_QUEUE_SIZE, USER_ID } from '../lib/config.js';
 import { normalizePassagesFromApi } from '../lib/passages.js';
-import { USER_ID } from '../lib/config.js';
 
 /**
- * Prefetch the next passage in the background while the user reads the current one.
+ * Keep a queue of prefetched passages while the user reads.
  */
 export function usePassagePrefetch({ cefrBand, seenPassageIds, enabled }) {
-  const prefetchedRef = useRef(null);
+  const queueRef = useRef([]);
   const inflightRef = useRef(null);
   const bandRef = useRef(cefrBand);
   const seenRef = useRef([]);
 
   const clearPrefetch = useCallback(() => {
-    prefetchedRef.current = null;
+    queueRef.current = [];
     inflightRef.current = null;
   }, []);
 
@@ -23,9 +23,9 @@ export function usePassagePrefetch({ cefrBand, seenPassageIds, enabled }) {
   }, []);
 
   const fetchNextPassage = useCallback(async (extraExclude = []) => {
-    const exclude = new Set([...seenRef.current, ...extraExclude]);
+    const exclude = new Set([...seenRef.current, ...extraExclude, ...queueRef.current.map((p) => p.id)]);
 
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       const res = await fetchGeneratePassage({
         userId: USER_ID,
         cefr: bandRef.current,
@@ -41,24 +41,26 @@ export function usePassagePrefetch({ cefrBand, seenPassageIds, enabled }) {
     return null;
   }, []);
 
-  const prefetchNext = useCallback(async () => {
-    if (!enabled || prefetchedRef.current || inflightRef.current) return;
+  const fillQueue = useCallback(async () => {
+    if (!enabled) return;
 
-    const band = bandRef.current;
-    inflightRef.current = (async () => {
-      try {
-        const next = await fetchNextPassage();
-        if (next && !isSeen(next) && bandRef.current === band) {
-          prefetchedRef.current = next;
+    while (queueRef.current.length < PREFETCH_QUEUE_SIZE && !inflightRef.current) {
+      const band = bandRef.current;
+      inflightRef.current = (async () => {
+        try {
+          const next = await fetchNextPassage();
+          if (next && !isSeen(next) && bandRef.current === band) {
+            const ids = new Set(queueRef.current.map((p) => p.id));
+            if (!ids.has(next.id)) queueRef.current.push(next);
+          }
+        } catch (err) {
+          console.warn('[ERT] prefetch failed:', err);
+        } finally {
+          inflightRef.current = null;
         }
-      } catch (err) {
-        console.warn('[ERT] prefetch failed:', err);
-      } finally {
-        inflightRef.current = null;
-      }
-    })();
-
-    await inflightRef.current;
+      })();
+      await inflightRef.current;
+    }
   }, [enabled, fetchNextPassage, isSeen]);
 
   useEffect(() => {
@@ -68,50 +70,44 @@ export function usePassagePrefetch({ cefrBand, seenPassageIds, enabled }) {
 
   useEffect(() => {
     seenRef.current = seenPassageIds || [];
+    queueRef.current = queueRef.current.filter((p) => !seenRef.current.includes(p.id));
   }, [seenPassageIds]);
 
   useEffect(() => {
     if (!enabled || seenPassageIds.length === 0) return;
-    if (prefetchedRef.current && isSeen(prefetchedRef.current)) {
-      prefetchedRef.current = null;
+    fillQueue();
+  }, [enabled, fillQueue, seenPassageIds]);
+
+  /** Instant: take next prefetched passage without waiting on network. */
+  const takeQueuedPassage = useCallback(() => {
+    while (queueRef.current.length > 0) {
+      const next = queueRef.current.shift();
+      if (next && !isSeen(next)) {
+        fillQueue();
+        return next;
+      }
     }
-    prefetchNext();
-  }, [enabled, isSeen, prefetchNext, seenPassageIds]);
+    return null;
+  }, [fillQueue, isSeen]);
 
   const consumePrefetched = useCallback(async () => {
-    const takeNext = async (candidate) => {
-      if (!candidate || isSeen(candidate)) {
-        return fetchNextPassage([candidate?.id].filter(Boolean));
-      }
-      return candidate;
-    };
-
-    if (prefetchedRef.current) {
-      const next = await takeNext(prefetchedRef.current);
-      prefetchedRef.current = null;
-      prefetchNext();
-      return next && !isSeen(next) ? next : takeNext(null);
-    }
+    const queued = takeQueuedPassage();
+    if (queued) return queued;
 
     if (inflightRef.current) {
       await inflightRef.current;
-      if (prefetchedRef.current) {
-        const next = await takeNext(prefetchedRef.current);
-        prefetchedRef.current = null;
-        prefetchNext();
-        return next && !isSeen(next) ? next : takeNext(null);
-      }
+      return takeQueuedPassage();
     }
 
     try {
-      const next = await takeNext(null);
-      prefetchNext();
+      const next = await fetchNextPassage();
+      fillQueue();
       return next && !isSeen(next) ? next : null;
     } catch (err) {
       console.error('[ERT] fetch next passage failed:', err);
       return null;
     }
-  }, [fetchNextPassage, isSeen, prefetchNext]);
+  }, [fetchNextPassage, fillQueue, isSeen, takeQueuedPassage]);
 
-  return { consumePrefetched, clearPrefetch };
+  return { consumePrefetched, takeQueuedPassage, clearPrefetch, fillQueue };
 }

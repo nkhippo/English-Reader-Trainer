@@ -1,0 +1,218 @@
+{
+  "A1A2": [
+    {
+      "passage_id": "ps_a1_01",
+      "cefr_band": "A1A2",
+      "text_markup": "I walk into a small café near my house. I {{look at}} the menu on the wall and {{pick up}} a cup of hot tea. There are {{a lot of}} people here today, but the waiter smiles and helps me find a seat.",
+      "ja_translation": "家の近くの小さなカフェに入る。壁のメニューを見て、温かいお茶を手に取る。今日はたくさん人がいるが、ウェイターは笑顔で席を見つけるのを手伝ってくれる。",
+      "chunk_texts": ["look at", "pick up", "a lot of"]
+    },
+    {
+      "passage_id": "ps_a1_02",
+      "cefr_band": "A1A2",
+      "text_markup": "We {{get up}} early on Saturday morning. We {{go out}} for a short walk in the park. I feel {{a little}} tired, but the morning air feels nice and fresh.",
+      "ja_translation": "土曜の朝、私たちは早く起きる。公園へ少し散歩に出かける。少し疲れているが、朝の空気は気持ちよくて清々しい。",
+      "chunk_texts": ["get up", "go out", "a little"]
+    },
+    {
+      "passage_id": "ps_a1_03",
+      "cefr_band": "A1A2",
+      "text_markup": "It is late at night. I {{turn on}} the light in my room and {{sit down}} at my desk. I have {{a few}} books to read tonight. I want to finish them before I go to bed.",
+      "ja_translation": "夜遅い。部屋の明かりをつけて、机に座る。今夜読む本が数冊ある。寝る前に読み終えたい。",
+      "chunk_texts": ["turn on", "sit down", "a few"]
+    },
+    {
+      "passage_id": "ps_a1_04",
+      "cefr_band": "A1A2",
+      "text_markup": "After school, I {{go out}} with my friend. We {{look at}} the shop windows and {{pick up}} some bread for dinner. There are {{a lot of}} students on the street today.",
+      "ja_translation": "放課後、友だちと外出する。店の窓を見て、夕食のパンを手に取る。今日は通りにたくさんの学生がいる。",
+      "chunk_texts": ["go out", "look at", "pick up", "a lot of"]
+    },
+    {
+      "passage_id": "ps_a1_05",
+      "cefr_band": "A1A2",
+      "text_markup": "I {{get up}} before my alarm rings. I {{turn on}} the radio and listen to the news. I drink {{a little}} coffee and feel ready for the day.",
+      "ja_translation": "目覚ましが鳴る前に起きる。ラジオをつけてニュースを聞く。少しコーヒーを飲んで、一日の準備ができた気がする。",
+      "chunk_texts": ["get up", "turn on", "a little"]
+    },
+    {
+      "passage_id": "ps_a1_06",
+      "cefr_band": "A1A2",
+      "text_markup": "My sister {{sit down}} next to me on the sofa. We {{look at}} photos from our trip. I show her {{a few}} pictures from the beach.",
+      "ja_translation": "妹がソファで私の隣に座る。私たちは旅行の写真を見る。私は浜辺の写真を数枚見せる。",
+      "chunk_texts": ["sit down", "look at", "a few"]
+    },
+    {
+      "passage_id": "ps_a1_07",
+      "cefr_band": "A1A2",
+      "text_markup": "It is raining, so we stay home. I {{pick up}} a novel and {{sit down}} by the window. After {{a little}} while, the sun comes out again.",
+      "ja_translation": "雨が降っているので家にいる。小説を手に取って窓際に座る。少しして、また日が出る。",
+      "chunk_texts": ["pick up", "sit down", "a little"]
+    },
+    {
+      "passage_id": "ps_a1_08",
+      "cefr_band": "A1A2",
+      "text_markup": "On Sunday we {{go out}} to the market. We {{look at}} the fruit and {{pick up}} some apples. We see {{a lot of}} colors and smells.",
+      "ja_translation": "日曜日に市場へ出かける。果物を見て、リンゴをいくつか手に取る。たくさんの色と匂いがある。",
+      "chunk_texts": ["go out", "look at", "pick up", "a lot of"]
+    },
+    {
+      "passage_id": "ps_a1_09",
+      "cefr_band": "A1A2",
+      "text_markup": "I come home tired. I {{turn on}} a lamp and {{sit down}} to rest. I read {{a few}} pages, then I go to bed.",
+      "ja_translation": "疲れて家に帰る。ランプをつけて座って休む。数ページ読んでから寝る。",
+      "chunk_texts": ["turn on", "sit down", "a few"]
+    },
+    {
+      "passage_id": "ps_a1_10",
+      "cefr_band": "A1A2",
+      "text_markup": "We {{get up}} late on holiday. We {{go out}} for breakfast and {{look at}} the sea. The day starts with {{a little}} sunshine and calm air.",
+      "ja_translation": "休日は遅く起きる。朝食を食べに出かけて海を見る。一日は少しの日差しと穏やかな空気で始まる。",
+      "chunk_texts": ["get up", "go out", "look at", "a little"]
+    }
+  ],
+  "B1": [
+    {
+      "passage_id": "ps_001",
+      "cefr_band": "B1",
+      "text_markup": "The restaurant was packed when we arrived, but the host {{managed to}} find us a table near the window. We sat down and {{picked up}} the menus, scanning the appetizers first. I ordered without much thought. It {{turned out}} to be the best meal I'd had all week.",
+      "ja_translation": "私たちが到着したとき、レストランは混んでいたが、店主はなんとか窓際の席を見つけてくれた。座って、メニューを手に取り、まず前菜から目を通した。あまり考えずに注文した。結果的に、その週で食べた中で最高の食事だった。",
+      "chunk_texts": ["managed to", "picked up", "turned out"]
+    },
+    {
+      "passage_id": "ps_002",
+      "cefr_band": "B1",
+      "text_markup": "I had been planning the trip for months, but on the morning of departure, I {{ran into}} an old friend at the airport. We {{caught up}} over coffee, and I almost missed my flight.",
+      "ja_translation": "数か月もかけて旅の計画を立ててきたが、出発の朝、空港で旧友にばったり会った。コーヒーを飲みながら近況を交わし、もう少しでフライトに乗り遅れるところだった。",
+      "chunk_texts": ["ran into", "caught up"]
+    },
+    {
+      "passage_id": "ps_003",
+      "cefr_band": "B1",
+      "text_markup": "When the meeting started, no one {{spoke up}} at first. Finally, Sarah {{laid out}} her proposal. By the end, everyone agreed it was the best plan we had {{come up with}} in months.",
+      "ja_translation": "会議が始まったとき、最初は誰も発言しなかった。やがてサラが提案を整然と並べた。終わる頃には、ここ数か月で思いついた最良の計画だと全員が同意していた。",
+      "chunk_texts": ["spoke up", "laid out", "come up with"]
+    },
+    {
+      "passage_id": "ps_004",
+      "cefr_band": "B1",
+      "text_markup": "She {{stayed up}} late reading the manuscript he had sent. By morning, she had {{made up}} her mind: it was good, but the ending needed work. He {{took it well}}, considering she was suggesting he rewrite half the book.",
+      "ja_translation": "彼女は彼が送ってきた原稿を遅くまで読み続けた。朝までには決心していた。良いけれど、結末は書き直しが必要だ。本の半分を書き直してほしいと提案しているのに、彼はうまく受け止めてくれた。",
+      "chunk_texts": ["stayed up", "made up", "took it well"]
+    },
+    {
+      "passage_id": "ps_005",
+      "cefr_band": "B1",
+      "text_markup": "The team {{managed to}} finish the report before the deadline. They {{picked up}} a few errors at the last minute. It {{turned out}} better than anyone expected.",
+      "ja_translation": "チームは締め切り前になんとか報告書を仕上げた。最後の瞬間にいくつかの誤りを見つけた。結果的に、誰の予想よりも良くできた。",
+      "chunk_texts": ["managed to", "picked up", "turned out"]
+    },
+    {
+      "passage_id": "ps_006",
+      "cefr_band": "B1",
+      "text_markup": "At the conference, I {{ran into}} a former colleague. We {{caught up}} during the break and exchanged contact details again.",
+      "ja_translation": "会議で以前の同僚にばったり会った。休憩中に近況を話し合い、再び連絡先を交換した。",
+      "chunk_texts": ["ran into", "caught up"]
+    },
+    {
+      "passage_id": "ps_007",
+      "cefr_band": "B1",
+      "text_markup": "Nobody {{spoke up}} until the manager asked a direct question. Then Ana {{laid out}} the risks clearly. We {{come up with}} a safer plan by the end of the hour.",
+      "ja_translation": "マネージャーが直接的な質問をするまで誰も発言しなかった。それからアナがリスクを明確に提示した。一時間の終わりまでに、より安全な計画を思いついた。",
+      "chunk_texts": ["spoke up", "laid out", "come up with"]
+    },
+    {
+      "passage_id": "ps_008",
+      "cefr_band": "B1",
+      "text_markup": "I {{stayed up}} to prepare for the interview. I had {{made up}} a list of questions to ask. Starting a new role felt {{worth the risk}}.",
+      "ja_translation": "面接の準備のために夜更かしした。尋ねる質問のリストを作っていた。新しい役割を始めることはリスクに見合う価値があると感じた。",
+      "chunk_texts": ["stayed up", "made up", "worth the risk"]
+    },
+    {
+      "passage_id": "ps_009",
+      "cefr_band": "B1",
+      "text_markup": "We almost missed the train, but we {{managed to}} catch it. On board, I {{picked up}} a magazine and relaxed. The trip {{turned out}} to be smoother than I feared.",
+      "ja_translation": "もう少しで電車に乗り遅れるところだったが、なんとか間に合った。車内で雑誌を手に取ってリラックスした。旅は心配していたよりスムーズだった。",
+      "chunk_texts": ["managed to", "picked up", "turned out"]
+    },
+    {
+      "passage_id": "ps_010",
+      "cefr_band": "B1",
+      "text_markup": "After the talk, several people {{spoke up}} with ideas. The facilitator {{laid out}} next steps. Together we {{come up with}} a timeline everyone could accept.",
+      "ja_translation": "講演の後、数人がアイデアを発言した。ファシリテーターが次のステップを提示した。全員が受け入れられるスケジュールを一緒に考え出した。",
+      "chunk_texts": ["spoke up", "laid out", "come up with"]
+    }
+  ],
+  "B2": [
+    {
+      "passage_id": "ps_b2_01",
+      "cefr_band": "B2",
+      "text_markup": "The committee {{carried out}} a thorough review and {{drew up}} a new policy. Critics argued the plan would {{bring about}} significant changes across the industry.",
+      "ja_translation": "委員会は徹底的な見直しを行い、新しい方針を作成した。批評家は、その計画が業界全体に大きな変化をもたらすだろうと主張した。",
+      "chunk_texts": ["carried out", "drew up", "bring about"]
+    },
+    {
+      "passage_id": "ps_b2_02",
+      "cefr_band": "B2",
+      "text_markup": "She {{set out}} to prove her theory, but the data did not {{bear out}} her assumptions. Still, the findings {{shed light on}} a problem no one had noticed.",
+      "ja_translation": "彼女は自分の理論を証明しようと取り組んだが、データはその仮定を裏付けなかった。それでも、調査結果は誰も気づかなかった問題を明らかにした。",
+      "chunk_texts": ["set out", "bear out", "shed light on"]
+    },
+    {
+      "passage_id": "ps_b2_03",
+      "cefr_band": "B2",
+      "text_markup": "The report {{points out}} several risks that leaders have {{overlooked}} for years. Unless teams {{follow through}} on these recommendations, little will change.",
+      "ja_translation": "報告書は、リーダーが長年見落としてきたいくつかのリスクを指摘している。チームがこれらの提言を最後まで実行しない限り、状況はほとんど変わらないだろう。",
+      "chunk_texts": ["points out", "overlooked", "follow through"]
+    },
+    {
+      "passage_id": "ps_b2_04",
+      "cefr_band": "B2",
+      "text_markup": "Researchers {{carried out}} interviews in three cities and {{drew up}} a summary of trends. The study may {{bring about}} changes in how schools teach reading.",
+      "ja_translation": "研究者たちは三つの都市でインタビューを行い、傾向の概要をまとめた。その研究は、学校の読書教育のあり方に変化をもたらすかもしれない。",
+      "chunk_texts": ["carried out", "drew up", "bring about"]
+    },
+    {
+      "passage_id": "ps_b2_05",
+      "cefr_band": "B2",
+      "text_markup": "He {{set out}} to build a simpler tool, but early tests did not {{bear out}} his design choices. The feedback {{shed light on}} what users actually needed.",
+      "ja_translation": "彼はよりシンプルなツールを作ろうと取り組んだが、初期のテストは彼の設計判断を裏付けなかった。フィードバックはユーザーが本当に必要としているものを明らかにした。",
+      "chunk_texts": ["set out", "bear out", "shed light on"]
+    },
+    {
+      "passage_id": "ps_b2_06",
+      "cefr_band": "B2",
+      "text_markup": "The audit {{points out}} gaps in the safety process that managers had {{overlooked}}. The firm promised to {{follow through}} on every recommendation.",
+      "ja_translation": "監査は、管理者が見落としていた安全プロセスの欠陥を指摘した。会社はすべての提言を最後まで実行すると約束した。",
+      "chunk_texts": ["points out", "overlooked", "follow through"]
+    },
+    {
+      "passage_id": "ps_b2_07",
+      "cefr_band": "B2",
+      "text_markup": "The team {{carried out}} a pilot program and {{drew up}} a plan for expansion. Leaders hope it will {{bring about}} fairer access to training.",
+      "ja_translation": "チームはパイロットプログラムを実施し、拡大計画を作成した。リーダーたちは、それがより公平な研修アクセスをもたらすことを期待している。",
+      "chunk_texts": ["carried out", "drew up", "bring about"]
+    },
+    {
+      "passage_id": "ps_b2_08",
+      "cefr_band": "B2",
+      "text_markup": "She {{set out}} to map the supply chain, and the data {{bear out}} her concern about delays. The report {{shed light on}} weak points in logistics.",
+      "ja_translation": "彼女はサプライチェーンを把握しようと取り組み、データは遅延への懸念を裏付けた。報告書は物流の弱点を明らかにした。",
+      "chunk_texts": ["set out", "bear out", "shed light on"]
+    },
+    {
+      "passage_id": "ps_b2_09",
+      "cefr_band": "B2",
+      "text_markup": "The memo {{points out}} that costs have risen because leaders {{overlooked}} early warnings. Without a team ready to {{follow through}}, savings will be limited.",
+      "ja_translation": "メモは、リーダーが早期の警告を見落としたためコストが上昇したと指摘している。最後まで実行する体制がなければ、節約は限られるだろう。",
+      "chunk_texts": ["points out", "overlooked", "follow through"]
+    },
+    {
+      "passage_id": "ps_b2_10",
+      "cefr_band": "B2",
+      "text_markup": "Investigators {{carried out}} a detailed review and {{drew up}} new guidelines. The changes should {{bring about}} clearer accountability across departments.",
+      "ja_translation": "調査チームは詳細なレビューを行い、新しいガイドラインを作成した。変更は部門間でより明確な説明責任をもたらすはずだ。",
+      "chunk_texts": ["carried out", "drew up", "bring about"]
+    }
+  ]
+}

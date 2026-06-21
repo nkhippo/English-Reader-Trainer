@@ -15,6 +15,7 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
   const [translationVisible, setTranslationVisible] = useState(false);
   const [hardFlash, setHardFlash] = useState(false);
   const [actionsDisabled, setActionsDisabled] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [awaitingStart, setAwaitingStart] = useState(true);
   const [isPaused, setIsPaused] = useState(false);
   const [isReadingStarted, setIsReadingStarted] = useState(false);
@@ -259,25 +260,35 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
   );
 
   const handleGotIt = useCallback(async () => {
-    if (!canInteract || !beginAction()) return;
+    if (!canInteract || actionPendingRef.current) return;
+    actionPendingRef.current = true;
+    setActionsDisabled(true);
+    setIsSaving(true);
     try {
       await finishPassageAction('got_it');
     } finally {
-      releaseActionLock();
+      actionPendingRef.current = false;
+      setActionsDisabled(false);
+      setIsSaving(false);
     }
-  }, [beginAction, canInteract, finishPassageAction, releaseActionLock]);
+  }, [canInteract, finishPassageAction]);
 
   const handleStillHard = useCallback(async () => {
-    if (!canInteract || !beginAction()) return;
+    if (!canInteract || actionPendingRef.current) return;
+    actionPendingRef.current = true;
+    setActionsDisabled(true);
+    setIsSaving(true);
     try {
       await finishPassageAction('still_hard');
     } finally {
-      releaseActionLock();
+      actionPendingRef.current = false;
+      setActionsDisabled(false);
+      setIsSaving(false);
     }
     setHardFlash(true);
     await new Promise((resolve) => setTimeout(resolve, 240));
     setHardFlash(false);
-  }, [beginAction, canInteract, finishPassageAction, releaseActionLock]);
+  }, [canInteract, finishPassageAction]);
 
   const selectChunk = useCallback(
     (chunkId) => {
@@ -369,6 +380,7 @@ export function useReader(passages, { onProgressUpdate, onAdvancePastEnd } = {})
     translationVisible,
     hardFlash,
     actionsDisabled,
+    isSaving,
     pauseAfterAction,
     awaitingStart,
     isPaused,
