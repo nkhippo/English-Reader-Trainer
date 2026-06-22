@@ -11,8 +11,7 @@ const MIN_PROCESSING_MS = 400;
 
 export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePastEnd, onBeforeAdvance } = {}) {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [activeChunkId, setActiveChunkId] = useState(null);
-  const [marginaliaOpen, setMarginaliaOpen] = useState(false);
+  const [detailChunkId, setDetailChunkId] = useState(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionDirection, setTransitionDirection] = useState(null);
   const [translationVisible, setTranslationVisible] = useState(false);
@@ -93,6 +92,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   useEffect(() => {
     currentIndexRef.current = currentIndex;
     setChunkEvaluations({});
+    setDetailChunkId(null);
   }, [currentIndex]);
 
   useEffect(() => {
@@ -103,8 +103,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       if (!isAppend) {
         setCurrentIndex(0);
         currentIndexRef.current = 0;
-        setActiveChunkId(null);
-        setMarginaliaOpen(false);
+        setDetailChunkId(null);
         resetReadingTimer();
       }
     }
@@ -131,14 +130,13 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     }
   }, [currentIndex, passage]);
 
-  const resetMarginalia = useCallback(() => {
-    setActiveChunkId(null);
-    setMarginaliaOpen(false);
+  const resetReaderUi = useCallback(() => {
+    setDetailChunkId(null);
   }, []);
 
   const applyAfterTransition = useCallback(
     (autoStart) => {
-      resetMarginalia();
+      resetReaderUi();
       const shouldAutoStart = autoStart && !pauseAfterActionRef.current;
       if (shouldAutoStart) {
         activateTimer();
@@ -149,7 +147,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
         }
       }
     },
-    [activateTimer, resetMarginalia, resetReadingTimer],
+    [activateTimer, resetReaderUi, resetReadingTimer],
   );
 
   const forceGoToIndex = useCallback(
@@ -346,7 +344,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     async () => {
       const gen = actionGenerationRef.current;
       stopTimer();
-      resetMarginalia();
+      resetReaderUi();
       await recordExposure();
       onBeforeAdvance?.();
       try {
@@ -387,7 +385,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       onBeforeAdvance,
       recordExposure,
       releaseActionLock,
-      resetMarginalia,
+      resetReaderUi,
       stopTimer,
     ],
   );
@@ -403,31 +401,28 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     }
   }, [allChunksEvaluated, beginAction, canInteract, finishNextAction, releaseActionLock]);
 
-  const selectChunk = useCallback(
-    (chunkId) => {
-      if (!canInteract) return;
-      setActiveChunkId(chunkId);
-      setMarginaliaOpen(true);
-    },
-    [canInteract],
-  );
+  const openChunkDetail = useCallback((chunkId) => {
+    if (!canInteract) return;
+    setDetailChunkId(chunkId);
+  }, [canInteract]);
 
-  const handleChunkClick = useCallback(
-    (chunkId) => {
-      if (!canInteract) return;
+  const closeChunkDetail = useCallback(() => {
+    setDetailChunkId(null);
+  }, []);
+
+  const cycleChunkEvaluation = useCallback(
+    async (chunkId) => {
+      if (!canInteract || !passage) return;
       if (chunkId === clozeChunkId && !clozeRevealed) {
         setClozeRevealed(true);
         return;
       }
-      selectChunk(chunkId);
+      const current = chunkEvaluations[chunkId];
+      const next = !current ? 'got_it' : current === 'got_it' ? 'still_hard' : 'got_it';
+      await evaluateChunk(chunkId, next);
     },
-    [canInteract, clozeChunkId, clozeRevealed, selectChunk],
+    [canInteract, chunkEvaluations, clozeChunkId, clozeRevealed, evaluateChunk, passage],
   );
-
-  const closeMarginalia = useCallback(() => {
-    setMarginaliaOpen(false);
-    setActiveChunkId(null);
-  }, []);
 
   useEffect(() => {
     return () => clearTimeout(actionLockTimerRef.current);
@@ -458,27 +453,26 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
         e.preventDefault();
         prevPassage();
       } else if (e.key === 'Escape') {
-        closeMarginalia();
+        closeChunkDetail();
       } else if (e.key === 't' || e.key === 'T') {
         showTranslation();
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [canInteract, closeMarginalia, handleNext, prevPassage, showTranslation]);
+  }, [canInteract, closeChunkDetail, handleNext, prevPassage, showTranslation]);
 
   useEffect(() => {
     return () => clearTimeout(translationTimerRef.current);
   }, []);
 
-  const activeChunk = passage?.chunks.find((c) => c.id === activeChunkId) ?? null;
+  const detailChunk = passage?.chunks.find((c) => c.id === detailChunkId) ?? null;
 
   return {
     passage,
     currentIndex,
-    activeChunkId,
-    activeChunk,
-    marginaliaOpen,
+    detailChunk,
+    detailChunkId,
     isTransitioning,
     transitionDirection,
     translationVisible,
@@ -497,9 +491,9 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     pauseReading,
     prevPassage,
     handleNext,
-    selectChunk,
-    handleChunkClick,
-    closeMarginalia,
+    cycleChunkEvaluation,
+    openChunkDetail,
+    closeChunkDetail,
     showTranslation,
     evaluateChunk,
   };

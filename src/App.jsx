@@ -3,7 +3,8 @@ import { useReader } from './hooks/useReader.js';
 import { usePassagePrefetch } from './hooks/usePassagePrefetch.js';
 import { Header } from './components/Header.jsx';
 import { PassageView } from './components/PassageView.jsx';
-import { MarginaliaPanel } from './components/MarginaliaPanel.jsx';
+import { ReaderHintPanel } from './components/ReaderHintPanel.jsx';
+import { ChunkDetailModal } from './components/ChunkDetailModal.jsx';
 import { Footer } from './components/Footer.jsx';
 import { TranslationOverlay } from './components/TranslationOverlay.jsx';
 import { ProcessingOverlay } from './components/ProcessingOverlay.jsx';
@@ -187,38 +188,27 @@ export default function App() {
         />
         <PassageView
           passage={reader.passage}
-          activeChunkId={reader.activeChunkId}
           chunkEvaluations={reader.chunkEvaluations}
           clozeChunkId={reader.clozeChunkId}
           clozeRevealed={reader.clozeRevealed}
           isTransitioning={reader.isTransitioning}
           transitionDirection={reader.transitionDirection}
-          onChunkClick={reader.handleChunkClick}
+          canInteract={
+            reader.isReadingStarted
+            && !reader.awaitingStart
+            && !reader.isPaused
+            && !reader.actionsDisabled
+            && !reader.isSaving
+          }
+          onChunkTap={(chunkId) => {
+            void reader.cycleChunkEvaluation(chunkId);
+          }}
+          onChunkLongPress={reader.openChunkDetail}
           onBackgroundClick={reader.showTranslation}
           onSwipeNext={() => reader.handleNext()}
           onSwipePrev={reader.prevPassage}
         />
-        <MarginaliaPanel
-          chunks={reader.passage?.chunks ?? []}
-          chunk={reader.activeChunk}
-          activeChunkId={reader.activeChunkId}
-          isOpen={reader.marginaliaOpen}
-          onClose={reader.closeMarginalia}
-          isFading={false}
-          clozePending={!!reader.clozeChunkId && !reader.clozeRevealed}
-          chunkEvaluations={reader.chunkEvaluations}
-          onEvaluate={(chunkId, signal) => {
-            void reader.evaluateChunk(chunkId, signal);
-          }}
-          onChunkSelect={reader.selectChunk}
-          actionsDisabled={
-            reader.actionsDisabled
-            || reader.isSaving
-            || reader.awaitingStart
-            || reader.isPaused
-            || !reader.isReadingStarted
-          }
-        />
+        <ReaderHintPanel />
       </main>
 
       <Footer
@@ -238,6 +228,12 @@ export default function App() {
           reader.awaitingStart || reader.isPaused || !reader.isReadingStarted
         }
         suspendQueued={reader.pauseAfterAction}
+      />
+
+      <ChunkDetailModal
+        chunk={reader.detailChunk}
+        visible={!!reader.detailChunk}
+        onClose={reader.closeChunkDetail}
       />
 
       <TranslationOverlay text={reader.passage?.ja ?? ''} visible={reader.translationVisible} />
