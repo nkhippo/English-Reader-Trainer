@@ -280,14 +280,16 @@ function debugPassageValidationSample(band) {
   const missingChunks = !validatePassageChunks_(generated.text, chunks);
   repairPassageTargetChunkSpans_(generated, chunks);
   const afterRepair = describePassageQualityFailure_(generated);
+  const missingChunksAfter = !validatePassageChunks_(generated.text, chunks);
 
   const result = {
     band,
     chunks: chunks.map((c) => c.text),
     missing_target_chunks: missingChunks,
+    missing_target_chunks_after_repair: missingChunksAfter,
     failures_before_repair: before,
     failures_after_repair: afterRepair,
-    would_pass_after_repair: afterRepair.length === 0 && !missingChunks,
+    would_pass_after_repair: afterRepair.length === 0 && !missingChunksAfter,
     self_check: generated.self_check || null,
     word_count: String(generated.text || '').split(/\s+/).filter(Boolean).length,
     sentence_count: String(generated.text || '').split(/[.!?]+/).filter((s) => s.trim()).length,
@@ -2148,15 +2150,48 @@ function callAnthropicJson_(payload, apiKey, usageMeta) {
 }
 
 function validatePassageChunks_(text, chunks) {
-  const lower = String(text).toLowerCase();
-  return chunks.every((c) => lower.indexOf(String(c.text).toLowerCase()) >= 0);
+  return chunks.every((c) => findChunkSpanInPassage_(text, c.text) != null);
+}
+
+/**
+ * Locate chunk text in passage. Exact match first; multi-word chunks allow an inflected
+ * leading word (e.g. chunk "have an opinion on" matches passage "had an opinion on").
+ * @returns {{start:number,end:number,matched:string}|null}
+ */
+function findChunkSpanInPassage_(text, chunkText) {
+  const expected = String(chunkText || '').trim();
+  if (!expected) return null;
+  const haystack = String(text);
+  const lower = haystack.toLowerCase();
+  const needle = expected.toLowerCase();
+  let idx = lower.indexOf(needle);
+  if (idx >= 0) {
+    return {
+      start: idx,
+      end: idx + expected.length,
+      matched: haystack.slice(idx, idx + expected.length),
+    };
+  }
+
+  const words = expected.split(/\s+/);
+  if (words.length >= 2) {
+    const tail = words.slice(1).join(' ');
+    if (tail.length >= 5) {
+      const esc = tail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp('\\b\\w+\\s+' + esc + '\\b', 'i');
+      const m = haystack.match(re);
+      if (m && m.index != null) {
+        return { start: m.index, end: m.index + m[0].length, matched: m[0] };
+      }
+    }
+  }
+  return null;
 }
 
 /** Fix char_start/char_end from actual passage text (Claude often misreports indices). */
 function repairPassageTargetChunkSpans_(generated, chunks) {
   if (!generated || !generated.text) return generated;
   const text = String(generated.text);
-  const lower = text.toLowerCase();
   const byId = {};
   (chunks || []).forEach((c) => { if (c && c.chunk_id) byId[c.chunk_id] = c; });
 
@@ -2164,11 +2199,11 @@ function repairPassageTargetChunkSpans_(generated, chunks) {
     const row = byId[tc.chunk_id] || tc;
     const expected = String(row.text || tc.text || '').trim();
     if (!expected) return;
-    const idx = lower.indexOf(expected.toLowerCase());
-    if (idx < 0) return;
-    tc.text = text.slice(idx, idx + expected.length);
-    tc.char_start = idx;
-    tc.char_end = idx + expected.length;
+    const span = findChunkSpanInPassage_(text, expected);
+    if (!span) return;
+    tc.text = span.matched;
+    tc.char_start = span.start;
+    tc.char_end = span.end;
   });
   return generated;
 }
