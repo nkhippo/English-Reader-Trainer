@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { logEncounter } from '../lib/api.js';
 import { CLOZE_PROBABILITY, READING_TIME_LIMIT_SEC, USER_ID } from '../lib/config.js';
@@ -41,6 +41,14 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
 
   const passage = passages[currentIndex] ?? null;
   const canInteract = isReadingStarted && !awaitingStart && !isPaused;
+
+  const allChunksEvaluated = useMemo(() => {
+    if (!passage?.chunks?.length) return false;
+    return passage.chunks.every((c) => {
+      const signal = chunkEvaluations[c.id];
+      return signal === 'got_it' || signal === 'still_hard';
+    });
+  }, [chunkEvaluations, passage]);
 
   const passageCount = useCallback(
     () => passagesRef?.current?.length ?? passages.length,
@@ -290,7 +298,8 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
 
   const evaluateChunk = useCallback(
     async (chunkId, signal) => {
-      if (!passage || chunkEvaluations[chunkId]) return false;
+      if (!passage || !canInteract) return false;
+      if (chunkEvaluations[chunkId] === signal) return false;
       const timeOnPageMs = isReadingStarted ? Date.now() - pageStartRef.current : 0;
       await logEncounter({
         userId: USER_ID,
@@ -303,8 +312,6 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       });
 
       setChunkEvaluations((prev) => ({ ...prev, [chunkId]: signal }));
-      setMarginaliaOpen(false);
-      setActiveChunkId(null);
 
       if (onProgressUpdate) {
         await onProgressUpdate().catch((err) => {
@@ -313,7 +320,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       }
       return true;
     },
-    [chunkEvaluations, isReadingStarted, onProgressUpdate, passage],
+    [canInteract, chunkEvaluations, isReadingStarted, onProgressUpdate, passage],
   );
 
   const startReading = useCallback(
@@ -386,7 +393,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   );
 
   const handleNext = useCallback(async () => {
-    if (actionPendingRef.current || !canInteract) return;
+    if (actionPendingRef.current || !canInteract || !allChunksEvaluated) return;
     if (!beginAction()) return;
     try {
       await finishNextAction();
@@ -394,7 +401,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       console.error('[ERT] next failed:', err);
       releaseActionLock();
     }
-  }, [beginAction, canInteract, finishNextAction, releaseActionLock]);
+  }, [allChunksEvaluated, beginAction, canInteract, finishNextAction, releaseActionLock]);
 
   const selectChunk = useCallback(
     (chunkId) => {
@@ -479,6 +486,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     isSaving,
     pauseAfterAction,
     chunkEvaluations,
+    allChunksEvaluated,
     awaitingStart,
     isPaused,
     isReadingStarted,

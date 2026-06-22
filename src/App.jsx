@@ -199,18 +199,25 @@ export default function App() {
           onSwipePrev={reader.prevPassage}
         />
         <MarginaliaPanel
+          chunks={reader.passage?.chunks ?? []}
           chunk={reader.activeChunk}
+          activeChunkId={reader.activeChunkId}
           isOpen={reader.marginaliaOpen}
           onClose={reader.closeMarginalia}
           isFading={false}
           clozePending={!!reader.clozeChunkId && !reader.clozeRevealed}
-          evaluation={reader.activeChunk ? reader.chunkEvaluations[reader.activeChunk.id] : null}
-          onEvaluate={(signal) => {
-            if (reader.activeChunk) {
-              void reader.evaluateChunk(reader.activeChunk.id, signal);
-            }
+          chunkEvaluations={reader.chunkEvaluations}
+          onEvaluate={(chunkId, signal) => {
+            void reader.evaluateChunk(chunkId, signal);
           }}
-          actionsDisabled={reader.actionsDisabled || reader.isSaving}
+          onChunkSelect={reader.selectChunk}
+          actionsDisabled={
+            reader.actionsDisabled
+            || reader.isSaving
+            || reader.awaitingStart
+            || reader.isPaused
+            || !reader.isReadingStarted
+          }
         />
       </main>
 
@@ -225,6 +232,7 @@ export default function App() {
           || reader.awaitingStart
           || reader.isPaused
           || !reader.isReadingStarted
+          || !reader.allChunksEvaluated
         }
         suspendDisabled={
           reader.awaitingStart || reader.isPaused || !reader.isReadingStarted

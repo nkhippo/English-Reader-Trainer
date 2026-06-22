@@ -1,5 +1,6 @@
 import { useI18n } from '../i18n/I18nProvider.jsx';
 import { resolveChunkGloss } from '../lib/chunkGlosses.js';
+import { ChunkEvaluationList } from './ChunkEvaluationList.jsx';
 
 function StageDots({ stage }) {
   return (
@@ -37,26 +38,36 @@ function StageDisplay({ stage, status }) {
 }
 
 export function MarginaliaPanel({
+  chunks,
   chunk,
+  activeChunkId,
   isOpen,
   onClose,
   isFading,
   clozePending,
-  evaluation,
+  chunkEvaluations,
   onEvaluate,
+  onChunkSelect,
   actionsDisabled,
 }) {
   const { locale, t } = useI18n();
   const emptyMessage = clozePending ? t.clozeReveal : t.marginaliaEmpty;
   const gloss = chunk ? resolveChunkGloss(chunk.text, chunk, locale) : '';
-  const evaluated = evaluation === 'got_it' || evaluation === 'still_hard';
 
   return (
     <aside className={`marginalia ${isOpen ? 'is-open' : ''}`}>
+      <ChunkEvaluationList
+        chunks={chunks}
+        evaluations={chunkEvaluations}
+        activeChunkId={activeChunkId}
+        onEvaluate={onEvaluate}
+        onChunkSelect={onChunkSelect}
+        disabled={actionsDisabled}
+      />
       <button className="marginalia__close" onClick={onClose} aria-label={t.close}>
         ×
       </button>
-      <div className={`marginalia__content ${isFading ? 'is-fading' : ''}`}>
+      <div className={`marginalia__detail ${isFading ? 'is-fading' : ''}`}>
         {!chunk ? (
           <div className={`marginalia__empty ${clozePending ? 'marginalia__empty--cloze' : ''}`}>
             {emptyMessage}
@@ -83,32 +94,6 @@ export function MarginaliaPanel({
             <div className="note__example">
               <span className="note__example-label">{t.example}</span>
               {chunk.example}
-            </div>
-            <div className="note__actions">
-              {evaluated ? (
-                <p className="note__evaluated" aria-live="polite">
-                  {evaluation === 'got_it' ? t.chunkEvaluatedOk : t.chunkEvaluatedHold}
-                </p>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className="btn btn--ghost note__action-btn"
-                    disabled={actionsDisabled}
-                    onClick={() => onEvaluate?.('got_it')}
-                  >
-                    {t.chunkOk}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn--ghost note__action-btn"
-                    disabled={actionsDisabled}
-                    onClick={() => onEvaluate?.('still_hard')}
-                  >
-                    {t.chunkHold}
-                  </button>
-                </>
-              )}
             </div>
           </div>
         )}
