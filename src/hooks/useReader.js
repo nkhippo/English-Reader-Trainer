@@ -5,7 +5,7 @@ import { CLOZE_PROBABILITY, READING_TIME_LIMIT_SEC, USER_ID } from '../lib/confi
 
 const READING_TIME_LIMIT_MS = READING_TIME_LIMIT_SEC * 1000;
 const TRANSITION_MS = 200;
-const ACTION_LOCK_TIMEOUT_MS = 15000;
+const ACTION_LOCK_TIMEOUT_MS = 10000;
 /** Keep processing UI visible long enough to notice (avoids sub-frame flash). */
 const MIN_PROCESSING_MS = 400;
 

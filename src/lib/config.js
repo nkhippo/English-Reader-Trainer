@@ -13,6 +13,9 @@ export const CLOZE_PROBABILITY = 0.3;
 /** Number of passages to prefetch ahead while reading. */
 export const PREFETCH_QUEUE_SIZE = 3;
 
+/** Max wait for GAS on "Got it" advance before local fallback (ms). */
+export const ADVANCE_GAS_TIMEOUT_MS = 3500;
+
 // GAS Script Properties (not used by frontend — reference for backend setup)
 export const SPREADSHEET_ID = '1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw';
 export const DRIVE_ROOT_ID = '1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI';

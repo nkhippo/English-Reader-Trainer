@@ -9,35 +9,23 @@ import { TranslationOverlay } from './components/TranslationOverlay.jsx';
 import { ProcessingOverlay } from './components/ProcessingOverlay.jsx';
 import { ReadingTimerBar } from './components/ReadingTimerBar.jsx';
 import { StartReadingOverlay } from './components/StartReadingOverlay.jsx';
-import { fetchSession, fetchStats, fetchGeneratePassage } from './lib/api.js';
+import { fetchSession, fetchStats } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
 import { pickUnseenBandTemplate } from './lib/localPassages.js';
 import { acquireNextPassageIndex } from './lib/passageList.js';
-import { chunkIdsFromPassages } from './lib/chunkIds.js';
+import { normalizeBandStats } from './lib/stats.js';
+import { USER_ID } from './lib/config.js';
+import { useI18n } from './i18n/I18nProvider.jsx';
 
 function chunkTextsFromPassages(passages = []) {
   return passages.flatMap((p) => (p.chunks || []).map((c) => c.text).filter(Boolean));
 }
-import { normalizeBandStats } from './lib/stats.js';
-import { USER_ID } from './lib/config.js';
-import { useI18n } from './i18n/I18nProvider.jsx';
 
 function firstPassageFromResponse(res) {
   const normalized = normalizePassagesFromApi(res.passages || []);
   if (normalized.length > 0) return normalized[0];
   return null;
-}
-
-async function fetchRemotePassage(cefrBand, seenIds, excludeChunkIds) {
-  const res = await fetchGeneratePassage({
-    userId: USER_ID,
-    cefr: cefrBand,
-    excludePassageIds: seenIds,
-    excludeChunkIds,
-  });
-  const normalized = normalizePassagesFromApi(res.passages || []);
-  return normalized[0] ?? null;
 }
 
 export default function App() {
@@ -115,12 +103,16 @@ export default function App() {
       takeQueuedPassage,
       consumePrefetched,
       fillQueue,
-      pickLocal: (seenIds) => pickUnseenBandTemplate(
-        cefrBand,
-        seenIds,
-        chunkTextsFromPassages(passagesRef.current),
-      ),
-      fetchRemote: (seenIds) => fetchRemotePassage(cefrBand, seenIds, chunkIdsFromPassages(passagesRef.current)),
+      pickLocal: (seenIds) => {
+        const current = passagesRef.current;
+        const lastId = current.length ? current[current.length - 1].id : null;
+        return pickUnseenBandTemplate(
+          cefrBand,
+          seenIds,
+          chunkTextsFromPassages(current),
+          lastId,
+        );
+      },
     });
   }, [cefrBand, consumePrefetched, fillQueue, takeQueuedPassage]);
 

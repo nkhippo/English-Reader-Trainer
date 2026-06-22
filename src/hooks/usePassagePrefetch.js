@@ -98,14 +98,25 @@ export function usePassagePrefetch({ cefrBand, seenPassageIds, seenPassages, ena
     return null;
   }, [fillQueue, isSeen]);
 
-  const consumePrefetched = useCallback(async () => {
+  const consumePrefetched = useCallback(async ({ maxWaitMs } = {}) => {
     const queued = takeQueuedPassage();
     if (queued) return queued;
 
     if (inflightRef.current) {
-      await inflightRef.current;
-      return takeQueuedPassage();
+      if (maxWaitMs != null) {
+        await Promise.race([
+          inflightRef.current,
+          new Promise((resolve) => { setTimeout(resolve, maxWaitMs); }),
+        ]);
+      } else {
+        await inflightRef.current;
+      }
+      const afterInflight = takeQueuedPassage();
+      if (afterInflight) return afterInflight;
     }
+
+    // Advance path: never start a fresh GAS call here (too slow); local fallback handles it.
+    if (maxWaitMs != null) return null;
 
     try {
       const next = await fetchNextPassage();

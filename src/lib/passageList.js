@@ -1,8 +1,6 @@
 import { flushSync } from 'react-dom';
 import { withTimeout } from './async.js';
-
-/** Network passage fetch must finish before the action-lock safety timeout. */
-const NETWORK_PASSAGE_TIMEOUT_MS = 8000;
+import { ADVANCE_GAS_TIMEOUT_MS } from './config.js';
 
 /** Append a passage and flush React state so navigation can read it immediately. */
 export function appendPassageSync(setPassages, passagesRef, next) {
@@ -22,26 +20,25 @@ export function appendPassageSync(setPassages, passagesRef, next) {
   return newIndex;
 }
 
-/**
- * Resolve and append the next passage from prefetch, local templates, or GAS.
- * Returns the new index, or null when no unique passage could be loaded.
- */
-async function tryTimedNetwork(promise, label) {
+async function tryTimedNetwork(promise, label, timeoutMs) {
   try {
-    return await withTimeout(promise, NETWORK_PASSAGE_TIMEOUT_MS, label);
+    return await withTimeout(promise, timeoutMs, label);
   } catch (err) {
     console.warn(`[ERT] ${label}:`, err);
     return null;
   }
 }
 
+/**
+ * Resolve and append the next passage from prefetch queue, brief GAS wait, or local fallback.
+ * Returns the new index, or null when no unique passage could be loaded.
+ */
 export async function acquireNextPassageIndex({
   passagesRef,
   setPassages,
   takeQueuedPassage,
   consumePrefetched,
   pickLocal,
-  fetchRemote,
   fillQueue,
 }) {
   const seenIds = () => passagesRef.current.map((p) => p.id);
@@ -59,27 +56,18 @@ export async function acquireNextPassageIndex({
     if (idx >= 0) return idx;
   }
 
-  // 2. Timed network prefetch — due/new chunks from GAS hybrid pipeline.
+  // 2. Brief wait for in-flight prefetch only — do not start a new slow GAS call on advance.
   const prefetched = await tryTimedNetwork(
-    consumePrefetched(),
+    consumePrefetched({ maxWaitMs: ADVANCE_GAS_TIMEOUT_MS }),
     'prefetch next passage',
+    ADVANCE_GAS_TIMEOUT_MS + 500,
   );
   if (prefetched) {
     const idx = tryAppend(prefetched);
     if (idx >= 0) return idx;
   }
 
-  // 3. Timed remote fetch when prefetch queue is empty.
-  const remote = await tryTimedNetwork(
-    fetchRemote(seenIds()),
-    'remote next passage',
-  );
-  if (remote) {
-    const idx = tryAppend(remote);
-    if (idx >= 0) return idx;
-  }
-
-  // 4. Local templates — offline / GAS timeout fallback only.
+  // 3. Local templates — instant fallback; background prefetch continues for later pages.
   try {
     const local = await pickLocal(seenIds());
     if (local) {
