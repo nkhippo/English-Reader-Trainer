@@ -1,6 +1,6 @@
 // Deployed GAS backend (Web App). Safe to commit — no secrets in this URL.
 export const DEFAULT_GAS_URL =
-  'https://script.google.com/macros/s/AKfycbwycydsjQeVlOBD-33-0g7XGs0TDdPofNDtIQOL0T0m46ttritIMq84UxxZD41P3FDW/exec';
+  'https://script.google.com/macros/s/AKfycbzgUfWy2wS18-sViC59kNZnWETXtV8ssPt6D5HmEw7yLaQ9c_f2KW5CgErHGwoNEnIA/exec';
 
 export const USER_ID = 'naoya';
 
