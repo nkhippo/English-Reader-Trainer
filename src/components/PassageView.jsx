@@ -15,11 +15,8 @@ export function PassageView({
   onChunkTap,
   onChunkLongPress,
   onBackgroundClick,
-  onSwipeNext,
-  onSwipePrev,
 }) {
   const { t } = useI18n();
-  const touchStartRef = useRef(null);
   const pressTimerRef = useRef(null);
   const longPressTriggeredRef = useRef(false);
   const activePointerRef = useRef(null);
@@ -67,27 +64,6 @@ export function PassageView({
     longPressTriggeredRef.current = false;
   }, [clearPressTimer]);
 
-  const handleTouchStart = (e) => {
-    touchStartRef.current = {
-      y: e.touches[0].clientY,
-      x: e.touches[0].clientX,
-    };
-  };
-
-  const handleTouchEnd = (e) => {
-    const start = touchStartRef.current;
-    if (!start) return;
-    const endY = e.changedTouches[0].clientY;
-    const endX = e.changedTouches[0].clientX;
-    const dy = endY - start.y;
-    const dx = endX - start.x;
-    if (Math.abs(dy) > 70 && Math.abs(dy) > Math.abs(dx)) {
-      if (dy < 0) onSwipeNext();
-      else onSwipePrev();
-    }
-    touchStartRef.current = null;
-  };
-
   if (!passage) return null;
 
   const segments = parsePassageText(passage.text, passage.chunks);
@@ -96,11 +72,7 @@ export function PassageView({
     : '';
 
   return (
-    <section
-      className={`reader__passage ${transitionClass}`}
-      onTouchStart={handleTouchStart}
-      onTouchEnd={handleTouchEnd}
-    >
+    <section className={`reader__passage ${transitionClass}`}>
       <article
         className="passage"
         onClick={(e) => {

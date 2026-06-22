@@ -205,8 +205,6 @@ export default function App() {
           }}
           onChunkLongPress={reader.openChunkDetail}
           onBackgroundClick={reader.showTranslation}
-          onSwipeNext={() => reader.handleNext()}
-          onSwipePrev={reader.prevPassage}
         />
         <ReaderHintPanel />
       </main>

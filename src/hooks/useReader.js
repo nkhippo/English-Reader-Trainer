@@ -446,13 +446,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   useEffect(() => {
     const onKeyDown = (e) => {
       if (actionPendingRef.current || !canInteract) return;
-      if (e.key === 'ArrowRight' || e.key === ' ') {
-        e.preventDefault();
-        handleNext();
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        prevPassage();
-      } else if (e.key === 'Escape') {
+      if (e.key === 'Escape') {
         closeChunkDetail();
       } else if (e.key === 't' || e.key === 'T') {
         showTranslation();
@@ -460,7 +454,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [canInteract, closeChunkDetail, handleNext, prevPassage, showTranslation]);
+  }, [canInteract, closeChunkDetail, showTranslation]);
 
   useEffect(() => {
     return () => clearTimeout(translationTimerRef.current);
