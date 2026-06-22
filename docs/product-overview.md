@@ -12,7 +12,7 @@
 | [chunk-lifecycle-design.md](./chunk-lifecycle-design.md) | チャンク提案・AI 生成・データ管理（**Claude 設計レビュー用**） |
 | [README.md](../README.md) | リポジトリ概要 |
 | 公開アプリ | https://nkhippo.github.io/English-Reader-Trainer/ |
-| GAS Web App | `https://script.google.com/macros/s/AKfycbwF-TlzAlKx4syPKfrzUmPKlvxhDiAHbM2YKQ0DGkcMqSXUnvGwyU0Y5V9xGhNNwboV/exec` |
+| GAS Web App | `https://script.google.com/macros/s/AKfycbydfzsGuLKFKHNVjnZhEDd-hLSYe0tJTDYv0EcovHRMRGZRJIPJzZxEa2mD4jGSKUv8/exec` |
 
 ---
 

@@ -6,7 +6,7 @@
 > **ソース:** `gas/Code.gs`（現行実装）、`token_usage` シート、`reportTokenUsage*` 実行ログ、Anthropic コンソール観測値
 
 **現行 GAS Web App:**  
-`https://script.google.com/macros/s/AKfycbwF-TlzAlKx4syPKfrzUmPKlvxhDiAHbM2YKQ0DGkcMqSXUnvGwyU0Y5V9xGhNNwboV/exec`
+`https://script.google.com/macros/s/AKfycbydfzsGuLKFKHNVjnZhEDd-hLSYe0tJTDYv0EcovHRMRGZRJIPJzZxEa2mD4jGSKUv8/exec`
 
 ---
 
