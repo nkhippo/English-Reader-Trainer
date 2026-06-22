@@ -37,12 +37,19 @@ export async function templateToPassage(tpl) {
   };
 }
 
-export async function pickUnseenBandTemplate(band, seenIds) {
+export async function pickUnseenBandTemplate(band, seenIds, excludeTexts = []) {
   const seen = new Set(seenIds);
-  const candidates = getBandTemplates(band).filter((t) => !seen.has(t.passage_id));
+  const exclude = new Set(
+    (excludeTexts || []).map((t) => String(t).toLowerCase().trim()).filter(Boolean),
+  );
+  const isEligible = (t) => {
+    if (seen.has(t.passage_id)) return false;
+    if (exclude.size === 0) return true;
+    return !(t.chunk_texts || []).some((text) => exclude.has(String(text).toLowerCase().trim()));
+  };
+  const candidates = getBandTemplates(band).filter(isEligible);
   if (candidates.length === 0) {
-    const all = getBandTemplates(band);
-    const pool = all.filter((t) => !seen.has(t.passage_id));
+    const pool = getBandTemplates(band).filter((t) => !seen.has(t.passage_id));
     if (pool.length === 0) return null;
     const tpl = pool[Math.floor(Math.random() * pool.length)];
     return templateToPassage(tpl);

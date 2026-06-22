@@ -15,6 +15,10 @@ import { normalizePassagesFromApi } from './lib/passages.js';
 import { pickUnseenBandTemplate } from './lib/localPassages.js';
 import { acquireNextPassageIndex } from './lib/passageList.js';
 import { chunkIdsFromPassages } from './lib/chunkIds.js';
+
+function chunkTextsFromPassages(passages = []) {
+  return passages.flatMap((p) => (p.chunks || []).map((c) => c.text).filter(Boolean));
+}
 import { normalizeBandStats } from './lib/stats.js';
 import { USER_ID } from './lib/config.js';
 import { useI18n } from './i18n/I18nProvider.jsx';
@@ -111,7 +115,11 @@ export default function App() {
       takeQueuedPassage,
       consumePrefetched,
       fillQueue,
-      pickLocal: (seenIds) => pickUnseenBandTemplate(cefrBand, seenIds),
+      pickLocal: (seenIds) => pickUnseenBandTemplate(
+        cefrBand,
+        seenIds,
+        chunkTextsFromPassages(passagesRef.current),
+      ),
       fetchRemote: (seenIds) => fetchRemotePassage(cefrBand, seenIds, chunkIdsFromPassages(passagesRef.current)),
     });
   }, [cefrBand, consumePrefetched, fillQueue, takeQueuedPassage]);

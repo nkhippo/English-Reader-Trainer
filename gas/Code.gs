@@ -789,7 +789,7 @@ function chunkInSrsScope_(cefr, band) {
 }
 
 /** Hours to look back when deprioritizing chunks already seen in this session. */
-const RECENT_CHUNK_HOURS = 6;
+const RECENT_CHUNK_HOURS = 24;
 
 function getRecentChunkIds_(userId, hours) {
   const sheet = getSheet_(SHEET_NAMES.ENCOUNTERS);
@@ -860,19 +860,14 @@ function templateRecentChunkOverlap_(tpl, index, excludeMap) {
   return overlap;
 }
 
+function filterTemplatesWithoutExcludedChunks_(templates, index, excludeMap) {
+  if (!excludeMap || !Object.keys(excludeMap).length) return templates;
+  return templates.filter((tpl) => templateRecentChunkOverlap_(tpl, index, excludeMap) === 0);
+}
+
 function pickTemplateFromPool_(candidates, index, excludeMap) {
-  if (!candidates.length) return null;
-  let minOverlap = Infinity;
-  let pool = [];
-  candidates.forEach((tpl) => {
-    const overlap = templateRecentChunkOverlap_(tpl, index, excludeMap);
-    if (overlap < minOverlap) {
-      minOverlap = overlap;
-      pool = [tpl];
-    } else if (overlap === minOverlap) {
-      pool.push(tpl);
-    }
-  });
+  const pool = filterTemplatesWithoutExcludedChunks_(candidates, index, excludeMap);
+  if (!pool.length) return null;
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
@@ -1125,9 +1120,6 @@ function buildPassageForUser_(userId, band, index, progressMap, excludePassageId
   const now = new Date();
   const templateExcludeMap = buildTemplateExcludeMap_(userId, excludeChunkIds, progressMap, now);
   const mode = getPassageMode_();
-  if (mode === 'template') {
-    return pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap);
-  }
 
   const dueData = handleDueChunks_({
     user_id: userId,
@@ -1136,6 +1128,13 @@ function buildPassageForUser_(userId, band, index, progressMap, excludePassageId
     exclude_chunk_ids: excludeChunkIds,
   });
   const chunks = selectChunksForPassage_(dueData, progressMap, index, band, templateExcludeMap);
+
+  if (mode === 'template') {
+    const tpl = pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap);
+    if (tpl) return tpl;
+    return tryClaudePassageFallback_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds, chunks)
+      || pickTemplatePassage_(band, index, progressMap, excludePassageIds, {});
+  }
 
   if (mode === 'hybrid') {
     if (chunks.length >= 2) {
@@ -1155,7 +1154,9 @@ function buildPassageForUser_(userId, band, index, progressMap, excludePassageId
       }
     }
 
-    return pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap);
+    return pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap)
+      || tryClaudePassageFallback_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds, chunks)
+      || pickTemplatePassage_(band, index, progressMap, excludePassageIds, {});
   }
 
   try {
@@ -1163,7 +1164,9 @@ function buildPassageForUser_(userId, band, index, progressMap, excludePassageId
   } catch (err) {
     Logger.log('Dynamic passage failed, using template: ' + err);
   }
-  return pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap);
+  return pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap)
+    || tryClaudePassageFallback_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds, chunks)
+    || pickTemplatePassage_(band, index, progressMap, excludePassageIds, {});
 }
 
 function isDynamicPassagesEnabled_() {
@@ -1182,6 +1185,7 @@ function pickTemplateCoveringChunks_(band, index, progressMap, excludePassageIds
 
   templates.forEach((tpl) => {
     if (exclude[tpl.passage_id]) return;
+    if (templateRecentChunkOverlap_(tpl, index, excludeMap) > 0) return;
     const texts = tpl.chunk_texts || [];
     let score = 0;
     texts.forEach((text) => {
@@ -1316,11 +1320,12 @@ function selectChunksForPassage_(dueData, progressMap, index, band, excludeMap) 
   }
   if (selected.length < 2) {
     const templates = getPassageTemplatesForBand_(band);
-    const tpl = pickTemplateFromPool_(templates, index, excludeMap)
-      || templates[Math.floor(Math.random() * templates.length)];
-    (tpl.chunk_texts || []).forEach((text) => {
-      add(index[text.toLowerCase().trim()] || fallbackChunk_(text, band));
-    });
+    const tpl = pickTemplateFromPool_(templates, index, excludeMap);
+    if (tpl) {
+      (tpl.chunk_texts || []).forEach((text) => {
+        add(index[text.toLowerCase().trim()] || fallbackChunk_(text, band));
+      });
+    }
   }
 
   return selected.slice(0, 4);
@@ -2063,11 +2068,22 @@ function pickTemplatePassage_(band, index, progressMap, excludePassageIds, exclu
   const templates = getPassageTemplatesForBand_(band);
   const exclude = {};
   (excludePassageIds || []).forEach((id) => { exclude[id] = true; });
-  let candidates = templates.filter((t) => !exclude[t.passage_id]);
-  if (candidates.length === 0) candidates = templates;
+  const candidates = templates.filter((t) => !exclude[t.passage_id]);
   const tpl = pickTemplateFromPool_(candidates, index, excludeMap);
-  if (!tpl) return enrichPassageTemplate_(candidates[0], index, band, progressMap);
+  if (!tpl) return null;
   return enrichPassageTemplate_(tpl, index, band, progressMap);
+}
+
+function tryClaudePassageFallback_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds, chunks) {
+  if (!chunks || chunks.length < 2) return null;
+  try {
+    return generateDynamicPassageClaude_(
+      userId, band, index, progressMap, excludePassageIds, chunks, excludeChunkIds,
+    );
+  } catch (err) {
+    Logger.log('Claude fallback failed: ' + err);
+    return null;
+  }
 }
 
 function computeStatsFromIndex_(index, progressMap, band) {
