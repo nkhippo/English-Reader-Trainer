@@ -1,16 +1,7 @@
 # Setup Guide — English Reader Trainer
 
-## Setup status
-
-| Step | Status |
-|------|--------|
-| Google Sheets (4 tabs) | ✅ Done |
-| Drive folder + subfolders | ✅ Done |
-| GAS deployed (Web App) | ✅ Done |
-| Script Properties set | ✅ Done |
-| Frontend GAS URL configured | ✅ Done |
-
-After setup, press **Got it** or **Still hard** and confirm rows appear in the `encounter_log` tab.
+> **最終更新:** 2026-06-22  
+> **対象:** GAS / Sheets / Drive / フロントの初回セットアップと運用
 
 ## Deployed resources
 
@@ -19,255 +10,176 @@ After setup, press **Got it** or **Still hard** and confirm rows appear in the `
 | GAS Web App | `https://script.google.com/macros/s/AKfycbydfzsGuLKFKHNVjnZhEDd-hLSYe0tJTDYv0EcovHRMRGZRJIPJzZxEa2mD4jGSKUv8/exec` |
 | Spreadsheet | [English Reader Trainer](https://docs.google.com/spreadsheets/d/1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw/edit) — ID: `1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw` |
 | Drive root | [EnglishReaderTrainer](https://drive.google.com/drive/folders/1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI) — ID: `1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI` |
+| GitHub Pages | https://nkhippo.github.io/English-Reader-Trainer/ |
 
-## Phase 1: Backend (Google Apps Script)
+## Setup checklist
 
-### 1. Google Sheets
+| Step | Status |
+|------|--------|
+| Google Sheets tabs | `chunks_master`, `user_progress`, `passages_meta`, `encounter_log`, `token_usage` |
+| Drive subfolders | `passages/`, `audio/`, `manifest/`, `shared/` |
+| GAS deployed (Web App) | Execute as: Me / Access: Anyone |
+| Script Properties | `SPREADSHEET_ID`, `DRIVE_ROOT_ID`, `ANTHROPIC_API_KEY`, `USE_DYNAMIC_PASSAGES=hybrid` |
+| Frontend `DEFAULT_GAS_URL` | `src/lib/config.js` |
 
-Spreadsheet ID: `1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw`
+**動作確認:** アプリでチャンクをタップ → marginalia で「✓ OK」→ `encounter_log` に `got_it`（単一 `chunk_id`）が記録されること。「次へ」で同一 `passage_id` の全チャンクに `exposure` が記録されること。
 
-### 2. Google Drive
+---
 
-Drive root folder ID: `1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI`
+## 1. Backend (Google Apps Script)
 
-### 3. Apps Script
+### 1.1 初回セットアップ
 
-1. Open [script.google.com](https://script.google.com) → New project.
-2. Paste `gas/Code.gs` and `gas/appsscript.json`.
-3. **Script Properties** (Project Settings → Script properties):
-   - `SPREADSHEET_ID` — your Sheets ID
-   - `DRIVE_ROOT_ID` — your Drive folder ID
-4. Run `setupSheets()` once (authorize when prompted).
-   - Creates 4 tabs: `chunks_master`, `user_progress`, `passages_meta`, `encounter_log`
-   - Creates Drive subfolders: `passages/`, `audio/`, `manifest/`, `shared/`
-5. **Deploy** → New deployment → Web app:
-   - Execute as: Me
-   - Who has access: Anyone
-6. Copy the `/exec` URL.
+1. [script.google.com](https://script.google.com) でプロジェクト作成、または **clasp push**（推奨）で `gas/Code.gs` + `gas/appsscript.json` を同期。
+2. **Script Properties** を設定:
+   - `SPREADSHEET_ID`
+   - `DRIVE_ROOT_ID`
+   - `ANTHROPIC_API_KEY`
+   - `USE_DYNAMIC_PASSAGES` = `hybrid`（推奨）
+3. `setupSheets()` を 1 回実行（シート・Drive サブフォルダ作成）。
+4. **Deploy** → Web app → New version → `/exec` URL を `src/lib/config.js` に反映。
 
-### 4. Frontend
+### 1.2 コード同期（clasp）
 
-The GAS URL is set in `src/lib/config.js` as `DEFAULT_GAS_URL`. Encounter logging works automatically.
+```bash
+cd gas
+cp .clasp.json.example .clasp.json   # scriptId を記入
+npx @google/clasp@2.4.2 login
+npx @google/clasp@2.4.2 push
+```
 
-## Sheet Schema
+貼り付けが 3000 行超で失敗する場合は clasp を使う。
 
-See the work-request document (§3.1) for full column definitions.
+### 1.3 計測用（任意）
+
+Script Property `TOKEN_USAGE_SINCE_ISO`（例: `2026-06-22T20:30:00+09:00`）を設定後、GAS で `reportTokenUsageSinceDeploy()` を実行。
+
+---
+
+## 2. Sheet schema
 
 | Tab | Purpose |
 |-----|---------|
-| `chunks_master` | CEFR chunk vocabulary (Phase 2) |
-| `user_progress` | SRS state per chunk (Phase 3) |
-| `passages_meta` | Generated passage metadata (Phase 4) + critique scores |
-| `encounter_log` | Event log (Phase 1+) |
+| `chunks_master` | CEFR チャンク語彙（7,125 件）+ ja/en 訳 + `enrich_version` |
+| `user_progress` | ユーザー × チャンクの SRS 状態 |
+| `passages_meta` | 生成パッセージ索引 + critique スコア |
+| `encounter_log` | 遭遇イベント（`got_it` / `still_hard` / `exposure` 等） |
+| `token_usage` | Claude API トークン計測ログ |
 
-## Drive Structure
+### `user_progress` 列
+
+`user_id`, `chunk_id`, `encounter_count`, `distinct_passages_count`, `last_encountered_at`, `next_due_at`, `srs_stage`, `status`, `got_it_count`, `still_hard_count`
+
+### `encounter_log` 列
+
+`event_id`, `user_id`, `chunk_id`, `passage_id`, `read_at`, `signal`, `time_on_page_ms`
+
+**signal 一覧（現行）**
+
+| signal | 送信元 | progress 更新 |
+|--------|--------|--------------|
+| `got_it` | marginalia「✓ OK」（単一チャンク） | `got_it_count++`, stage+1, `encounter_count++` |
+| `still_hard` | marginalia「△ 保留」（単一チャンク） | `still_hard_count++`, stage−1, `encounter_count++` |
+| `exposure` | Footer「次へ」（パッセージ内全チャンク） | `distinct_passages_count` と `last_encountered_at` のみ |
+| `passive` | （フロントからは送信しない） | ログのみ、progress 更新なし |
+| `skipped` | レガシー | ログのみ |
+
+---
+
+## 3. Drive structure
 
 ```
 /EnglishReaderTrainer/
-  /passages/     ← generated passage JSON (Phase 4)
-  /audio/        ← TTS mp3 cache (Phase 5)
-  /manifest/     ← audio_manifest.json (shared with Listening Trainer)
-  /shared/       ← cefr_words.json, cefr_chunks.json, passage-templates.json ✅
+  passages/     ← Sonnet 生成 JSON
+  audio/        ← TTS キャッシュ（将来）
+  manifest/     ← audio_manifest.json（将来）
+  shared/       ← cefr_*.json, passage-templates.json
 ```
 
-## Phase 2: CEFR import & translations
+---
 
-### 1. Upload CEFR JSON (done)
+## 4. CEFR import & enrich
 
-Place in Drive `/EnglishReaderTrainer/shared/`:
+### 4.1 初回
 
-- `cefr_words.json`
-- `cefr_chunks.json`
+1. Drive `shared/` に `cefr_words.json`, `cefr_chunks.json` を配置。
+2. `importChunksFromCefr()` — `chunks_master` に約 7,125 行投入。
+3. 既存シートなら一度だけ:
+   - `migrateChunksAddEnTranslationColumn()`
+   - `migrateChunksAddEnrichVersionColumn()`
 
-### 2. Update GAS code & redeploy
+### 4.2 翻訳バッチ（手動・バックグラウンド）
 
-1. Copy latest `gas/Code.gs` into your Apps Script project.
-2. Add Script Property: `ANTHROPIC_API_KEY` (Claude API key).
-3. **Deploy** → Manage deployments → Edit → **New version** → Deploy.
-
-### 3. Run import (Apps Script editor)
-
-```
-importChunksFromCefr()
-```
-
-Imports ~7,100 entries (words + chunks) into `chunks_master`.
-
-### 4. Run Japanese translation batch
-
-```
-enrichAllTranslations()
-```
-
-Runs batches of **625 items** per Claude call until `remaining: 0`. If the 6-minute execution limit is reached, it **automatically schedules the next run** (~30 seconds later) and continues until complete. No manual re-runs needed.
-
-To cancel a queued continuation:
-
-```
-stopEnrichAllTranslations()
-```
-
-Single batch only: `enrichTranslationsBatch()`
-
-Check coverage anytime:
-
-```
-auditTranslationCoverage()
-```
-
-Returns `{ total, covered, remaining, percent }`.
-
-### 5. Add English gloss column (existing spreadsheets)
-
-On spreadsheets created before `en_translation` was added, run once:
-
-```
-migrateChunksAddEnTranslationColumn()
-```
-
-### 6. Run English gloss batch
-
-```
-enrichAllEnglishGlosses()
-```
-
-Runs batches of **625 items** per Claude call until `en_translation` `remaining: 0` (auto-continues like the Japanese batch).
-
-To cancel:
-
-```
-stopEnrichAllEnglishGlosses()
-```
-
-Single batch only: `enrichEnglishGlossesBatch()`
-
-Check coverage:
-
-```
-auditEnglishGlossCoverage()
-```
-
-### 7. Verify
-
-- GET the Web App URL → `{ "phase": 2, "chunks_master_count": 7100+ }`
-- App header: tap level pill → switch A1+A2 / B1 / B2
-- Marginalia shows `ja_translation` from sheet after enrich
-- Switch UI to EN — marginalia shows `en_translation` after English gloss batch
-
-## Phase 3: SRS engine
-
-After redeploying GAS with Phase 3 code:
-
-- **Got it** / **Still hard** updates `user_progress` (stage, `next_due_at`, status)
-- Header stats show real **reviewing** / **graduated** counts from `user_progress`
-- Marginalia shows live **encounters** and **stage** dots
-
-If `encounter_log` has rows but `user_progress` is empty, run **`rebuildUserProgressFromEncounters()`** once in the Apps Script editor.
-
-SRS rules (§4.2): got_it → stage+1, still_hard → stage−1, passive → +1 day. Graduated at got_it ≥ 6 × distinct passages ≥ 5 × span ≥ 3 days. Non-due chunks are not reshown until next_due_at.
-
-## Phase 4: Passage generation (template / hybrid / dynamic)
-
-### Passage modes (`USE_DYNAMIC_PASSAGES`)
-
-| Value | Behavior |
-|-------|----------|
-| *(omit or `false`)* | **Template only** — rotate fixed templates |
-| `hybrid` | **Recommended** — cache → template covering due chunks → Claude only when a chunk needs new context |
-| `true` | **Dynamic only** — always try Claude first (falls back to template on error) |
-
-Set in Apps Script → Project Settings → Script properties.
-
-### 1. Upload passage templates (recommended)
-
-Place `shared/passage-templates.json` in Drive `/EnglishReaderTrainer/shared/` (15 templates per band: A1A2, B1, B2).
-
-The frontend bundles the same JSON for **instant local fallback** when you tap **Got it** / **Still hard**. GAS loads it from Drive when serving `/session` and `/generate_passage`; if missing, inline fallback (3 per band) is used.
-
-### 2. Redeploy GAS
-
-1. Copy latest `gas/Code.gs` into your Apps Script project.
-2. **Deploy** → Manage deployments → Edit → **New version** → Deploy.
-
-### 3. Enable hybrid (recommended)
-
-```
-USE_DYNAMIC_PASSAGES = hybrid
-```
-
-`ANTHROPIC_API_KEY` must be set. Hybrid calls Claude only when due chunks are **new** or have appeared in **fewer than 3 distinct passages** — otherwise it serves cached or template passages (fast, no API cost).
-
-### 4. Frontend behavior (no GAS wait on advance)
-
-- Prefetches **3** passages in the background while you read.
-- On **Got it** / **Still hard**: shows next passage from prefetch queue, else a local template (~instant), then refills the queue via GAS in the background.
-- Processing overlay lasts only the ~200ms page transition, not the GAS round-trip.
-
-Generated passages are saved to Drive `passages/` and registered in `passages_meta`.
-
-## Phase 4b: Prompt renewal (2026-06)
-
-プロンプト・モデル全面見直し後、**翻訳と動的パッセージキャッシュを作り直す**手順。詳細: [claude-api-prompt-renewal-work-request.md](./claude-api-prompt-renewal-work-request.md)
-
-### 1. GAS を更新・再デプロイ
-
-最新 `gas/Code.gs` を貼り付け → **New version** でデプロイ。
-
-### 2. スプレッドシート / Drive をリフレッシュ（1 回だけ）
-
-Apps Script エディタで **1 回** 実行:
-
-```
-preparePromptRenewalRefresh()
-```
-
-| 対象 | 処理 |
+| 関数 | 内容 |
 |------|------|
-| `chunks_master.ja_translation` | **全行クリア** |
-| `chunks_master.en_translation` | **全行クリア** |
-| `chunks_master.example_sentence` | **全行クリア** |
-| `passages_meta` | データ行を削除（ヘッダー残す） |
-| Drive `passages/` | 既存 JSON をゴミ箱へ |
-| `passages_meta` | `critique_total` / `critique_verdict` 列を追加（未設定時） |
+| `enrichAllTranslations()` | ja + example_sentence（**150 件/回**、6 分制限内で自動継続） |
+| `enrichAllEnglishGlosses()` | en グロス（同上） |
+| `stopEnrichAllTranslations()` / `stopEnrichAllEnglishGlosses()` | 継続トリガー停止 |
+| `auditTranslationCoverage()` / `auditEnglishGlossCoverage()` | カバレッジ確認 |
 
-**触らないもの:** `user_progress`, `encounter_log`（SRS 履歴は保持）
+**差分 enrich:** `ENRICH_PROMPT_VERSION`（`Code.gs` 定数）と `chunks_master.enrich_version` で、プロンプト変更時のみ未更新行を再 enrich。`preparePromptRenewalRefresh()` は翻訳全消去せず、パッセージキャッシュのみクリア。
 
-### 3. 翻訳バッチを再実行
+---
 
-```
-enrichAllTranslations()        # remaining: 0 まで
-enrichAllEnglishGlosses()      # remaining: 0 まで
-```
+## 5. Passage mode (`USE_DYNAMIC_PASSAGES`)
 
-新プロンプト（コア意味・L2-L2 グロス）で 7,125 件を再生成。
+| 値 | 挙動 |
+|----|------|
+| `hybrid`（**推奨・デフォルト**） | キャッシュ → スーパーセットキャッシュ → テンプレ → 条件付き Sonnet |
+| `true` | 常に Sonnet 優先 |
+| `false` / `template` | テンプレのみ |
 
-### 4. テンプレサンプル生成（レビュー用）
+Sonnet が走る条件（`needsNewPassageContext_`）: 選定チャンクのいずれかが new / stage 0 / `distinct_passages_count < 3`。
 
-```
-generateTemplateBatch_("A1A2", 1)
-generateTemplateBatch_("B1", 1)
-generateTemplateBatch_("B2", 1)
-```
+---
 
-Drive `shared/template-batch-*.json` に出力。合格品をレビュー後 `passage-templates.json` にマージ。
+## 6. フロントエンド
 
-### 5. バックグラウンド warmup（任意）
+### 6.1 定数（`src/lib/config.js`）
 
-```
-warmupPassagesForBand_("B1", 3)
-```
+| 定数 | 値 | 意味 |
+|------|-----|------|
+| `READING_TIME_LIMIT_SEC` | 60 | 読了目安タイマー（**記録なし**） |
+| `PREFETCH_QUEUE_SIZE` | 1 | 先読みパッセージ数 |
+| `CLOZE_PROBABILITY` | 0.3 | Cloze 空白の確率 |
+| `ADVANCE_GAS_TIMEOUT_MS` | 3500 | GAS 待ちタイムアウト |
 
-critique 合格パッセージのみ `passages_meta` に `critique_verdict=pass` で保存。
+### 6.2 読書 UX（現行）
 
-## Local Development
+- **marginalia:** チャンクタップ → 解説 + 「✓ OK」「△ 保留」（個別評価、任意）
+- **Footer:** 「次へ →」でパッセージ遷移 + 全チャンク `exposure` 送信
+- **中断:** セッション一時停止（評価の still_hard とは別）
+- **先読み:** 読書中に次 1 本をバックグラウンド生成（キューは「次へ」で消さない）
+
+### 6.3 ローカル開発・デプロイ
 
 ```bash
 npm install
-npm run dev
+npm run dev          # ローカル
+npm run build        # dist/
 ```
 
-## Deployment
+`main` への push で GitHub Pages 自動デプロイ（`.github/workflows/deploy.yml`）。
 
-Pushes to `main` automatically deploy to GitHub Pages via `.github/workflows/deploy.yml`.
+---
 
-Live URL: https://nkhippo.github.io/English-Reader-Trainer/
+## 7. 運用メンテナンス
+
+| タスク | 関数 / 手順 |
+|--------|------------|
+| GAS 更新 | `clasp push` → Deploy → New version → `config.js` URL 更新 |
+| progress 再構築 | `rebuildUserProgressFromEncounters()`（`exposure` / `got_it` / `still_hard` を正しく反映） |
+| 夜間 warmup | `setupNightlyWarmupTrigger()`（1 回） |
+| トークン確認 | `reportTokenUsageLastHour()` / `reportTokenUsageSinceDeploy()` |
+| パッセージ診断 | `debugPassageValidationSample('B1')` |
+
+---
+
+## 8. 関連ドキュメント
+
+| ファイル | 内容 |
+|---------|------|
+| [product-overview.md](./product-overview.md) | 思想・全体仕様 |
+| [chunk-lifecycle-design.md](./chunk-lifecycle-design.md) | チャンク選定・遭遇・卒業の設計 |
+| [claude-api.md](./claude-api.md) | Claude モデル・プロンプト・検証 |
+| [claude-api-token-usage.md](./claude-api-token-usage.md) | トークン計測・コスト |
