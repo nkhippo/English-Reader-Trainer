@@ -17,6 +17,8 @@
  *   7. generateTemplateBatch_(band, count) — optional template samples for review
  *   8. setupNightlyWarmupTrigger() — once, schedules nightly passage warmup
  *   9. reportTokenUsage() — purpose/model token summary from token_usage sheet
+ *  9b. reportTokenUsageLastHour() — last 60 min (post-deploy spot check)
+ *  9c. reportTokenUsageSinceDeploy() — since TOKEN_USAGE_SINCE_ISO script property
  *  10. Redeploy Web App after code changes
  */
 
@@ -183,6 +185,26 @@ function reportTokenUsage_(sinceIso) {
 /** Apps Script editor entry point (functions ending in _ are hidden from the run menu). */
 function reportTokenUsage(sinceIso) {
   return reportTokenUsage_(sinceIso);
+}
+
+/** Last 60 minutes — no timestamp setup needed. Good for post-deploy spot checks. */
+function reportTokenUsageLastHour() {
+  const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  return reportTokenUsageDetail(since);
+}
+
+/**
+ * Since Script Property TOKEN_USAGE_SINCE_ISO (ISO8601, e.g. 2026-06-22T18:15:00+09:00).
+ * Set in Project Settings → Script properties before running.
+ */
+function reportTokenUsageSinceDeploy() {
+  const since = PropertiesService.getScriptProperties().getProperty('TOKEN_USAGE_SINCE_ISO');
+  if (!since) {
+    const msg = 'Set Script Property TOKEN_USAGE_SINCE_ISO (ISO8601 deploy time, e.g. 2026-06-22T18:15:00+09:00)';
+    Logger.log(msg);
+    return { error: msg };
+  }
+  return reportTokenUsageDetail(since);
 }
 
 /**
