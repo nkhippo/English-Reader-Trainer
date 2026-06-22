@@ -16,7 +16,7 @@
  *   6. enrichAllEnglishGlosses() — runs until remaining = 0
  *   7. generateTemplateBatch_(band, count) — optional template samples for review
  *   8. setupNightlyWarmupTrigger() — once, schedules nightly passage warmup
- *   9. reportTokenUsage_() — purpose/model token summary from token_usage sheet
+ *   9. reportTokenUsage() — purpose/model token summary from token_usage sheet
  *  10. Redeploy Web App after code changes
  */
 
@@ -178,6 +178,100 @@ function reportTokenUsage_(sinceIso) {
   });
   Logger.log(lines.join('\n'));
   return { rows: data.length - 1, by_purpose: agg, table: lines.join('\n') };
+}
+
+/** Apps Script editor entry point (functions ending in _ are hidden from the run menu). */
+function reportTokenUsage(sinceIso) {
+  return reportTokenUsage_(sinceIso);
+}
+
+/**
+ * Detailed token_usage breakdown: purpose × retry_index, plus raw row count.
+ * @param {string} [sinceIso] ISO8601 lower bound; omit for last 7 days.
+ * Example: reportTokenUsageDetail('2026-06-22T17:00:00+09:00')
+ */
+function reportTokenUsageDetail(sinceIso) {
+  ensureTokenUsageSheet_();
+  const sheet = getSheet_(SHEET_NAMES.TOKEN_USAGE);
+  if (sheet.getLastRow() < 2) {
+    Logger.log('token_usage: no rows yet');
+    return { rows: 0 };
+  }
+
+  const cutoff = sinceIso
+    ? new Date(sinceIso).getTime()
+    : Date.now() - 7 * 24 * 3600000;
+  const data = sheet.getDataRange().getValues();
+  const col = indexColumns_(data[0]);
+  const byPurposeRetry = {};
+  let inWindow = 0;
+
+  for (let r = 1; r < data.length; r++) {
+    const ts = new Date(data[r][col.ts]).getTime();
+    if (isNaN(ts) || ts < cutoff) continue;
+    inWindow += 1;
+    const purpose = String(data[r][col.purpose] || 'unknown');
+    const retry = Number(data[r][col.retry_index]) || 0;
+    const key = purpose + '\tretry_' + retry;
+    if (!byPurposeRetry[key]) {
+      byPurposeRetry[key] = { purpose, retry_index: retry, calls: 0 };
+    }
+    byPurposeRetry[key].calls += 1;
+  }
+
+  const lines = [
+    'since\t' + (sinceIso || '(last 7 days)'),
+    'rows_in_window\t' + inWindow,
+    '',
+    'purpose\tretry_index\tcalls\tmeaning',
+    'passage\t0\t?\t1回目の Sonnet 生成（別リクエストごとに0からカウント）',
+    'passage\t1\t?\t同一 generate_passage 内の2回目リトライ',
+    'passage\t2\t?\t同一 generate_passage 内の3回目リトライ',
+    '',
+    'purpose\tretry_index\tcalls',
+  ];
+  Object.keys(byPurposeRetry).sort().forEach((key) => {
+    const row = byPurposeRetry[key];
+    lines.push([row.purpose, row.retry_index, row.calls].join('\t'));
+  });
+  Logger.log(lines.join('\n'));
+  return { rows_in_window: inWindow, by_purpose_retry: byPurposeRetry, table: lines.join('\n') };
+}
+
+/**
+ * One-shot diagnostic: generate a passage and log validation failures before/after span repair.
+ * Run in the editor: debugPassageValidationSample('B1')
+ */
+function debugPassageValidationSample(band) {
+  band = normalizeCefrBand_(band || 'B1');
+  const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
+
+  const index = loadChunksIndex_();
+  const progressMap = loadUserProgressMap_('naoya');
+  const dueData = handleDueChunks_({ user_id: 'naoya', cefr: band, limit: 20 });
+  const chunks = selectChunksForPassage_(dueData, progressMap, index, band);
+  if (chunks.length < 2) throw new Error('Not enough chunks for band ' + band);
+
+  const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, '', 0, 'passage');
+  const before = describePassageQualityFailure_(generated);
+  const missingChunks = !validatePassageChunks_(generated.text, chunks);
+  repairPassageTargetChunkSpans_(generated, chunks);
+  const afterRepair = describePassageQualityFailure_(generated);
+
+  const result = {
+    band,
+    chunks: chunks.map((c) => c.text),
+    missing_target_chunks: missingChunks,
+    failures_before_repair: before,
+    failures_after_repair: afterRepair,
+    would_pass_after_repair: afterRepair.length === 0 && !missingChunks,
+    self_check: generated.self_check || null,
+    word_count: String(generated.text || '').split(/\s+/).filter(Boolean).length,
+    sentence_count: String(generated.text || '').split(/[.!?]+/).filter((s) => s.trim()).length,
+  };
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
 }
 
 function anthropicRequestHeaders_(apiKey) {
@@ -1529,14 +1623,10 @@ function generateDynamicPassageClaude_(userId, band, index, progressMap, exclude
 
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
+    let generated = null;
     try {
-      const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, '', attempt, 'passage');
-      if (!validatePassageChunks_(generated.text, chunks)) {
-        throw new Error('Generated passage missing target chunks');
-      }
-      if (!validatePassageQuality_(generated)) {
-        throw new Error('Generated passage failed quality checks');
-      }
+      generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, '', attempt, 'passage');
+      validateGeneratedPassageOrThrow_(generated, chunks);
       const passage = buildPassageOutput_(generated, chunks, index, band, progressMap);
       if (excludePassageIds.indexOf(passage.passage_id) >= 0) {
         passage.passage_id = makePassageId_(chunks);
@@ -1546,6 +1636,7 @@ function generateDynamicPassageClaude_(userId, band, index, progressMap, exclude
       return passage;
     } catch (err) {
       lastErr = err;
+      logPassageGenerationFailure_(attempt, err, generated, chunks);
       Utilities.sleep(400);
     }
   }
@@ -1744,14 +1835,10 @@ function generateDynamicPassage_(userId, band, index, progressMap, excludePassag
 
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
+    let generated = null;
     try {
-      const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, '', attempt, 'passage');
-      if (!validatePassageChunks_(generated.text, chunks)) {
-        throw new Error('Generated passage missing target chunks');
-      }
-      if (!validatePassageQuality_(generated)) {
-        throw new Error('Generated passage failed quality checks');
-      }
+      generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, '', attempt, 'passage');
+      validateGeneratedPassageOrThrow_(generated, chunks);
       const passage = buildPassageOutput_(generated, chunks, index, band, progressMap);
       if (excludePassageIds.indexOf(passage.passage_id) >= 0) {
         passage.passage_id = makePassageId_(chunks);
@@ -1761,6 +1848,7 @@ function generateDynamicPassage_(userId, band, index, progressMap, excludePassag
       return passage;
     } catch (err) {
       lastErr = err;
+      logPassageGenerationFailure_(attempt, err, generated, chunks);
       Utilities.sleep(400);
     }
   }
@@ -2042,27 +2130,86 @@ function validatePassageChunks_(text, chunks) {
   return chunks.every((c) => lower.indexOf(String(c.text).toLowerCase()) >= 0);
 }
 
-function validatePassageQuality_(generated) {
-  const text = String(generated.text || '').trim();
-  const ja = String(generated.ja_translation || '').trim();
-  if (!text || !ja) return false;
+/** Fix char_start/char_end from actual passage text (Claude often misreports indices). */
+function repairPassageTargetChunkSpans_(generated, chunks) {
+  if (!generated || !generated.text) return generated;
+  const text = String(generated.text);
+  const lower = text.toLowerCase();
+  const byId = {};
+  (chunks || []).forEach((c) => { if (c && c.chunk_id) byId[c.chunk_id] = c; });
+
+  (generated.target_chunks || []).forEach((tc) => {
+    const row = byId[tc.chunk_id] || tc;
+    const expected = String(row.text || tc.text || '').trim();
+    if (!expected) return;
+    const idx = lower.indexOf(expected.toLowerCase());
+    if (idx < 0) return;
+    tc.text = text.slice(idx, idx + expected.length);
+    tc.char_start = idx;
+    tc.char_end = idx + expected.length;
+  });
+  return generated;
+}
+
+function describePassageQualityFailure_(generated) {
+  const reasons = [];
+  const text = String(generated?.text || '').trim();
+  const ja = String(generated?.ja_translation || '').trim();
+  if (!text) reasons.push('empty text');
+  if (!ja) reasons.push('empty ja_translation');
 
   const sentences = text.split(/[.!?]+/).filter((s) => s.trim().length > 0);
-  if (sentences.length < 3 || sentences.length > 6) return false;
+  if (sentences.length < 3) reasons.push('too few sentences (' + sentences.length + ')');
+  if (sentences.length > 6) reasons.push('too many sentences (' + sentences.length + ')');
 
   const words = text.split(/\s+/).filter(Boolean);
-  if (words.length < 40 || words.length > 140) return false;
+  if (words.length < 40) reasons.push('too few words (' + words.length + ')');
+  if (words.length > 140) reasons.push('too many words (' + words.length + ')');
 
-  const targets = generated.target_chunks || [];
-  if (targets.length < 2) return false;
+  const targets = generated?.target_chunks || [];
+  if (targets.length < 2) reasons.push('target_chunks < 2');
 
-  return targets.every((tc) => {
+  targets.forEach((tc, i) => {
     const start = Number(tc.char_start);
     const end = Number(tc.char_end);
-    if (isNaN(start) || isNaN(end) || end <= start) return false;
+    if (isNaN(start) || isNaN(end) || end <= start) {
+      reasons.push('chunk[' + i + '] invalid span ' + start + '-' + end);
+      return;
+    }
     const slice = text.slice(start, end);
-    return slice && slice.toLowerCase() === String(tc.text).toLowerCase();
-  }) && validatePassageSelfCheck_(generated.self_check);
+    if (!slice || slice.toLowerCase() !== String(tc.text).toLowerCase()) {
+      reasons.push('chunk[' + i + '] position mismatch at ' + start + '-' + end
+        + ' expected "' + tc.text + '" got "' + slice + '"');
+    }
+  });
+
+  if (!validatePassageSelfCheck_(generated?.self_check)) {
+    reasons.push('self_check: ' + JSON.stringify(generated.self_check));
+  }
+  return reasons;
+}
+
+function validatePassageQuality_(generated) {
+  return describePassageQualityFailure_(generated).length === 0;
+}
+
+function validateGeneratedPassageOrThrow_(generated, chunks) {
+  repairPassageTargetChunkSpans_(generated, chunks);
+  if (!validatePassageChunks_(generated.text, chunks)) {
+    throw new Error('Generated passage missing target chunks');
+  }
+  const reasons = describePassageQualityFailure_(generated);
+  if (reasons.length) {
+    throw new Error('Generated passage failed quality checks: ' + reasons.join('; '));
+  }
+}
+
+function logPassageGenerationFailure_(attempt, err, generated, chunks) {
+  if (generated) repairPassageTargetChunkSpans_(generated, chunks);
+  const reasons = generated ? describePassageQualityFailure_(generated) : [];
+  const msg = String(err && err.message || err);
+  Logger.log('Passage attempt ' + (attempt + 1) + '/3 failed: ' + msg
+    + (reasons.length ? ' | detail: ' + reasons.join('; ') : ''));
 }
 
 function validatePassageSelfCheck_(selfCheck) {
@@ -2306,14 +2453,10 @@ function generatePassageWithCritique_(chunks, band, index, progressMap, apiKey) 
   let lastErr = null;
 
   for (let attempt = 0; attempt < 3; attempt++) {
+    let generated = null;
     try {
-      const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, revisionHint, attempt, 'warmup');
-      if (!validatePassageChunks_(generated.text, chunks)) {
-        throw new Error('Generated passage missing target chunks');
-      }
-      if (!validatePassageQuality_(generated)) {
-        throw new Error('Generated passage failed quality checks');
-      }
+      generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, revisionHint, attempt, 'warmup');
+      validateGeneratedPassageOrThrow_(generated, chunks);
       const critique = callClaudeCritiquePassage_(generated, chunks, band, index, apiKey, attempt, 'warmup');
       if (!critiquePasses_(critique)) {
         revisionHint = critique.revision_hint || (critique.problems || []).join('; ');
@@ -2325,6 +2468,7 @@ function generatePassageWithCritique_(chunks, band, index, progressMap, apiKey) 
       return { passage, critique };
     } catch (err) {
       lastErr = err;
+      logPassageGenerationFailure_(attempt, err, generated, chunks);
       Utilities.sleep(600);
     }
   }
@@ -2364,8 +2508,10 @@ function generateTemplateBatch_(band, count) {
     const revisionHint = `Theme: ${themeHint}. Avoid openings similar to: ${excludeOpeners.join(' | ')}`;
 
     const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, revisionHint, 0, 'template_batch');
+    repairPassageTargetChunkSpans_(generated, chunks);
     if (!validatePassageQuality_(generated)) {
-      Logger.log('Template batch: quality fail, skipping');
+      Logger.log('Template batch: quality fail, skipping — '
+        + describePassageQualityFailure_(generated).join('; '));
       continue;
     }
     const critique = callClaudeCritiquePassage_(generated, chunks, band, index, apiKey, 0, 'template_batch');
