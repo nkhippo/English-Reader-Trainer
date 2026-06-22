@@ -139,6 +139,7 @@ export async function fetchGeneratePassage({ userId, cefr, excludePassageIds = [
 
 export async function logEncounter({
   userId,
+  chunkId,
   chunkIds,
   passageId,
   signal,
@@ -146,6 +147,7 @@ export async function logEncounter({
 }) {
   return callAction('log_encounter', {
     user_id: userId,
+    chunk_id: chunkId,
     chunk_ids: chunkIds,
     passage_id: passageId,
     signal,

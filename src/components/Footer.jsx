@@ -2,10 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useI18n } from '../i18n/I18nProvider.jsx';
 
 export function Footer({
-  onStillHard,
-  onGotIt,
+  onNext,
   onSuspend,
-  hardFlash,
   actionsDisabled,
   isProcessing,
   suspendDisabled,
@@ -25,23 +23,15 @@ export function Footer({
     return () => clearTimeout(timer);
   }, [optimisticProcessing]);
 
-  const handleGotIt = useCallback(() => {
+  const handleNext = useCallback(() => {
     if (actionsDisabled || optimisticProcessing) return;
     setOptimisticProcessing(true);
-    void Promise.resolve(onGotIt());
-  }, [actionsDisabled, onGotIt, optimisticProcessing]);
+    void Promise.resolve(onNext());
+  }, [actionsDisabled, onNext, optimisticProcessing]);
 
   return (
     <footer className="footer">
-      <div className="footer__left">
-        <button
-          className={`btn btn--ghost ${hardFlash ? 'btn--hard-flash' : ''}`}
-          onClick={onStillHard}
-          disabled={actionsDisabled || showProcessing}
-        >
-          ⊘ {t.stillHard}
-        </button>
-      </div>
+      <div className="footer__left" />
       <div className="footer__center">
         <button
           className={`btn btn--ghost ${suspendQueued ? 'btn--suspend-queued' : ''}`}
@@ -56,17 +46,17 @@ export function Footer({
         <button
           type="button"
           className={`btn btn--primary ${showProcessing ? 'btn--processing' : ''}`}
-          onClick={handleGotIt}
+          onClick={handleNext}
           disabled={actionsDisabled || optimisticProcessing}
           aria-busy={showProcessing || undefined}
         >
           {showProcessing ? (
             <>
               <span className="btn__spinner" aria-hidden="true" />
-              {t.gotItProcessing}
+              {t.nextProcessing}
             </>
           ) : (
-            t.gotIt
+            t.nextPassage
           )}
         </button>
       </div>

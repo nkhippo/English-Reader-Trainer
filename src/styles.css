@@ -405,6 +405,32 @@ button {
   background: rgba(255, 224, 102, 0.72);
 }
 
+.chunk--evaluated-ok {
+  background: rgba(180, 220, 180, 0.55);
+  border-bottom-color: rgba(80, 140, 80, 0.5);
+}
+
+.chunk--evaluated-hold {
+  background: rgba(220, 200, 160, 0.55);
+  border-bottom-color: rgba(160, 120, 60, 0.45);
+}
+
+.note__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.note__action-btn {
+  flex: 1;
+}
+
+.note__evaluated {
+  margin: 1rem 0 0;
+  font-size: 0.9rem;
+  color: var(--color-ink-muted, #6b6560);
+}
+
 .marginalia__empty--cloze {
   color: var(--color-ink);
   font-style: italic;

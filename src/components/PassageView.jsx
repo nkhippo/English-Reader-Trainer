@@ -19,6 +19,7 @@ function parsePassageText(text, chunks) {
 export function PassageView({
   passage,
   activeChunkId,
+  chunkEvaluations,
   clozeChunkId,
   clozeRevealed,
   isTransitioning,
@@ -89,10 +90,16 @@ export function PassageView({
               return <span key={seg.key}>{seg.content}</span>;
             }
             const isCloze = seg.chunk.id === clozeChunkId && !clozeRevealed;
+            const evaluation = chunkEvaluations?.[seg.chunk.id];
+            const evalClass = evaluation === 'got_it'
+              ? 'chunk--evaluated-ok'
+              : evaluation === 'still_hard'
+                ? 'chunk--evaluated-hold'
+                : '';
             return (
               <mark
                 key={seg.key}
-                className={`chunk ${activeChunkId === seg.chunk.id ? 'chunk--active' : ''} ${isCloze ? 'chunk--cloze' : ''}`}
+                className={`chunk ${activeChunkId === seg.chunk.id ? 'chunk--active' : ''} ${isCloze ? 'chunk--cloze' : ''} ${evalClass}`}
                 aria-label={isCloze ? t.clozeReveal : undefined}
                 onClick={(e) => {
                   e.stopPropagation();

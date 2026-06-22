@@ -16,9 +16,9 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionDirection, setTransitionDirection] = useState(null);
   const [translationVisible, setTranslationVisible] = useState(false);
-  const [hardFlash, setHardFlash] = useState(false);
   const [actionsDisabled, setActionsDisabled] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [chunkEvaluations, setChunkEvaluations] = useState({});
   const [awaitingStart, setAwaitingStart] = useState(true);
   const [isPaused, setIsPaused] = useState(false);
   const [isReadingStarted, setIsReadingStarted] = useState(false);
@@ -37,7 +37,6 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   const currentIndexRef = useRef(0);
   const pauseAfterActionRef = useRef(false);
   const [pauseAfterAction, setPauseAfterAction] = useState(false);
-  const passiveFiredRef = useRef(false);
   const remainingSecondsRef = useRef(READING_TIME_LIMIT_SEC);
 
   const passage = passages[currentIndex] ?? null;
@@ -59,7 +58,6 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     setIsReadingStarted(false);
     setIsTimerRunning(false);
     syncRemainingSeconds(READING_TIME_LIMIT_SEC);
-    passiveFiredRef.current = false;
   }, [syncRemainingSeconds]);
 
   const stopTimer = useCallback(() => {
@@ -74,7 +72,6 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       } else {
         pageStartRef.current = Date.now();
         syncRemainingSeconds(READING_TIME_LIMIT_SEC);
-        passiveFiredRef.current = false;
       }
 
       setAwaitingStart(false);
@@ -87,6 +84,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
 
   useEffect(() => {
     currentIndexRef.current = currentIndex;
+    setChunkEvaluations({});
   }, [currentIndex]);
 
   useEffect(() => {
@@ -270,14 +268,30 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     }, 3500);
   }, [canInteract]);
 
-  const recordEncounter = useCallback(
-    async (signal) => {
+  const recordExposure = useCallback(
+    async () => {
       if (!passage) return;
       const timeOnPageMs = isReadingStarted ? Date.now() - pageStartRef.current : 0;
-      const chunkIds = passage.chunks.map((c) => c.id);
       await logEncounter({
         userId: USER_ID,
-        chunkIds,
+        chunkIds: passage.chunks.map((c) => c.id),
+        passageId: passage.id,
+        signal: 'exposure',
+        timeOnPageMs,
+      }).catch((err) => {
+        console.error('[ERT] log_encounter (exposure) failed:', err);
+      });
+    },
+    [isReadingStarted, passage],
+  );
+
+  const evaluateChunk = useCallback(
+    async (chunkId, signal) => {
+      if (!passage || chunkEvaluations[chunkId]) return false;
+      const timeOnPageMs = isReadingStarted ? Date.now() - pageStartRef.current : 0;
+      await logEncounter({
+        userId: USER_ID,
+        chunkId,
         passageId: passage.id,
         signal,
         timeOnPageMs,
@@ -285,13 +299,18 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
         console.error('[ERT] log_encounter failed:', err);
       });
 
-      if (onProgressUpdate && (signal === 'got_it' || signal === 'still_hard')) {
+      setChunkEvaluations((prev) => ({ ...prev, [chunkId]: signal }));
+      setMarginaliaOpen(false);
+      setActiveChunkId(null);
+
+      if (onProgressUpdate) {
         await onProgressUpdate().catch((err) => {
           console.error('[ERT] progress refresh failed:', err);
         });
       }
+      return true;
     },
-    [isReadingStarted, onProgressUpdate, passage],
+    [chunkEvaluations, isReadingStarted, onProgressUpdate, passage],
   );
 
   const startReading = useCallback(
@@ -313,12 +332,12 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     setAwaitingStart(true);
   }, [canInteract, isTimerRunning, stopTimer]);
 
-  const finishPassageAction = useCallback(
-    async (signal) => {
+  const finishNextAction = useCallback(
+    async () => {
       const gen = actionGenerationRef.current;
       stopTimer();
       resetMarginalia();
-      await recordEncounter(signal);
+      await recordExposure();
       onBeforeAdvance?.();
       try {
         let advanced = false;
@@ -356,37 +375,23 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       activateTimer,
       advanceToNextInternal,
       onBeforeAdvance,
-      recordEncounter,
+      recordExposure,
       releaseActionLock,
       resetMarginalia,
       stopTimer,
     ],
   );
 
-  const handleGotIt = useCallback(async () => {
+  const handleNext = useCallback(async () => {
     if (actionPendingRef.current || !canInteract) return;
     if (!beginAction()) return;
     try {
-      await finishPassageAction('got_it');
+      await finishNextAction();
     } catch (err) {
-      console.error('[ERT] got_it failed:', err);
+      console.error('[ERT] next failed:', err);
       releaseActionLock();
     }
-  }, [beginAction, canInteract, finishPassageAction, releaseActionLock]);
-
-  const handleStillHard = useCallback(async () => {
-    if (actionPendingRef.current || !canInteract) return;
-    if (!beginAction()) return;
-    try {
-      await finishPassageAction('still_hard');
-      setHardFlash(true);
-      await new Promise((resolve) => setTimeout(resolve, 240));
-      setHardFlash(false);
-    } catch (err) {
-      console.error('[ERT] still_hard failed:', err);
-      releaseActionLock();
-    }
-  }, [beginAction, canInteract, finishPassageAction, releaseActionLock]);
+  }, [beginAction, canInteract, finishNextAction, releaseActionLock]);
 
   const selectChunk = useCallback(
     (chunkId) => {
@@ -418,7 +423,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     return () => clearTimeout(actionLockTimerRef.current);
   }, []);
 
-  // Countdown display + silent passive encounter at time limit
+  // Countdown display only — no encounter logging at time limit
   useEffect(() => {
     if (!isTimerRunning || !passage) return undefined;
 
@@ -426,24 +431,19 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       const elapsed = Date.now() - pageStartRef.current;
       const remaining = Math.max(0, Math.ceil((READING_TIME_LIMIT_MS - elapsed) / 1000));
       syncRemainingSeconds(remaining);
-
-      if (remaining === 0 && !passiveFiredRef.current) {
-        passiveFiredRef.current = true;
-        recordEncounter('passive');
-      }
     };
 
     tick();
     const interval = setInterval(tick, 250);
     return () => clearInterval(interval);
-  }, [currentIndex, isTimerRunning, passage, recordEncounter, syncRemainingSeconds]);
+  }, [currentIndex, isTimerRunning, passage, syncRemainingSeconds]);
 
   useEffect(() => {
     const onKeyDown = (e) => {
       if (actionPendingRef.current || !canInteract) return;
       if (e.key === 'ArrowRight' || e.key === ' ') {
         e.preventDefault();
-        advanceToNext();
+        handleNext();
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
         prevPassage();
@@ -455,7 +455,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [advanceToNext, canInteract, closeMarginalia, prevPassage, showTranslation]);
+  }, [canInteract, closeMarginalia, handleNext, prevPassage, showTranslation]);
 
   useEffect(() => {
     return () => clearTimeout(translationTimerRef.current);
@@ -472,10 +472,10 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     isTransitioning,
     transitionDirection,
     translationVisible,
-    hardFlash,
     actionsDisabled,
     isSaving,
     pauseAfterAction,
+    chunkEvaluations,
     awaitingStart,
     isPaused,
     isReadingStarted,
@@ -485,12 +485,11 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     startReading,
     pauseReading,
     prevPassage,
-    advanceToNext,
+    handleNext,
     selectChunk,
     handleChunkClick,
     closeMarginalia,
     showTranslation,
-    handleGotIt,
-    handleStillHard,
+    evaluateChunk,
   };
 }

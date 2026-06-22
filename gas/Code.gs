@@ -80,6 +80,8 @@ const ENRICH_EN_CONTINUE_HANDLER = 'enrichAllEnglishGlossesContinue_';
 /** Bump when ja/en enrich prompts change — only stale rows are re-enriched. */
 const ENRICH_PROMPT_VERSION = 1;
 const WARMUP_NIGHTLY_HANDLER = 'runNightlyWarmup_';
+/** Max Sonnet attempts per passage generation (initial + retries). */
+const PASSAGE_GENERATION_MAX_ATTEMPTS = 2;
 
 // ===== Token usage logging =====
 
@@ -1292,12 +1294,35 @@ function countDistinctPassagesForChunk_(userId, chunkId) {
   if (sheet.getLastRow() < 2) return 0;
   const data = sheet.getDataRange().getValues();
   const passages = {};
+  const COUNTABLE = { got_it: 1, still_hard: 1, exposure: 1 };
   for (let r = 1; r < data.length; r++) {
     if (data[r][1] === userId && data[r][2] === chunkId && data[r][3]) {
-      passages[data[r][3]] = true;
+      const sig = data[r][5];
+      if (COUNTABLE[sig]) passages[data[r][3]] = true;
     }
   }
   return Object.keys(passages).length;
+}
+
+/** Context exposure only: distinct_passages + last_seen; stage/counts unchanged. */
+function updateExposureForChunk_(userId, chunkId, passageId) {
+  const sheet = getSheet_(SHEET_NAMES.PROGRESS);
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const col = indexColumns_(headers);
+  const map = loadUserProgressMap_(userId);
+  const existing = map[chunkId];
+  const nowIso = new Date().toISOString();
+  const distinctPassages = countDistinctPassagesForChunk_(userId, chunkId);
+
+  if (existing) {
+    sheet.getRange(existing.row, col.distinct_passages_count + 1).setValue(distinctPassages);
+    sheet.getRange(existing.row, col.last_encountered_at + 1).setValue(nowIso);
+  } else {
+    sheet.appendRow([
+      userId, chunkId, 0, distinctPassages, nowIso,
+      '', 0, 'new', 0, 0,
+    ]);
+  }
 }
 
 function updateProgressForChunk_(userId, chunkId, passageId, signal) {
@@ -1367,7 +1392,11 @@ function rebuildUserProgressFromEncounters() {
     const key = `${userId}|${chunkId}|${passageId}|${signal}|${r}`;
     if (seen[key]) continue;
     seen[key] = true;
-    updateProgressForChunk_(userId, chunkId, passageId, signal);
+    if (signal === 'exposure') {
+      updateExposureForChunk_(userId, chunkId, passageId);
+    } else if (signal === 'got_it' || signal === 'still_hard') {
+      updateProgressForChunk_(userId, chunkId, passageId, signal);
+    }
     rebuilt++;
   }
 
@@ -1646,7 +1675,7 @@ function generateDynamicPassageClaude_(userId, band, index, progressMap, exclude
   if (cached) return cached;
 
   let lastErr = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < PASSAGE_GENERATION_MAX_ATTEMPTS; attempt++) {
     let generated = null;
     try {
       generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, '', attempt, 'passage');
@@ -1681,11 +1710,48 @@ function getRecentPassageIds_(userId, hours) {
   return Object.keys(ids);
 }
 
+function computeUnlearnedRatio_(progressMap, index, band) {
+  let total = 0;
+  let unlearned = 0;
+  Object.values(index).forEach((chunk) => {
+    if (!chunkInSrsScope_(chunk.cefr, band)) return;
+    total += 1;
+    const prog = progressMap[chunk.chunk_id];
+    if (!prog || prog.status === 'new' || prog.srs_stage === 0) unlearned += 1;
+  });
+  return total > 0 ? unlearned / total : 1;
+}
+
+function passageMixForPhase_(ratio) {
+  if (ratio > 0.40) return { newCount: 3, reviewCount: 2 };
+  if (ratio >= 0.15) return { newCount: 2, reviewCount: 3 };
+  return { newCount: 1, reviewCount: 4 };
+}
+
+function sortReviewCandidates_(items, progressMap) {
+  return items.slice().sort((a, b) => {
+    const pa = progressMap[a.chunk_id] || {};
+    const pb = progressMap[b.chunk_id] || {};
+    const shA = pa.still_hard_count || 0;
+    const shB = pb.still_hard_count || 0;
+    if (shB !== shA) return shB - shA;
+    const dA = pa.distinct_passages_count || 0;
+    const dB = pb.distinct_passages_count || 0;
+    if (dA !== dB) return dA - dB;
+    const sA = pa.srs_stage || 0;
+    const sB = pb.srs_stage || 0;
+    return sA - sB;
+  });
+}
+
 function selectChunksForPassage_(dueData, progressMap, index, band, excludeMap, excludePassageIds) {
   const due = filterExcludedChunks_(dueData.due_chunks || [], excludeMap);
   const newChunks = filterExcludedChunks_(dueData.new_chunks || [], excludeMap);
+  const ratio = computeUnlearnedRatio_(progressMap, index, band);
+  const mix = passageMixForPhase_(ratio);
   const selected = [];
   const used = {};
+  const maxNew = Math.min(mix.newCount, 3);
   let newCount = 0;
 
   function isNewChunk(item) {
@@ -1698,9 +1764,10 @@ function selectChunksForPassage_(dueData, progressMap, index, band, excludeMap, 
     if (excludeMap && excludeMap[item.chunk_id]) return;
     const row = index[String(item.text).toLowerCase().trim()] || item;
     const chunkId = row.chunk_id || item.chunk_id;
-    if (isNewChunk({ chunk_id: chunkId }) && newCount >= 2) return;
+    const isNew = isNewChunk({ chunk_id: chunkId });
+    if (isNew && newCount >= maxNew) return;
     used[chunkId] = true;
-    if (isNewChunk({ chunk_id: chunkId })) newCount += 1;
+    if (isNew) newCount += 1;
     selected.push({
       chunk_id: chunkId,
       text: row.text || item.text,
@@ -1708,26 +1775,26 @@ function selectChunksForPassage_(dueData, progressMap, index, band, excludeMap, 
     });
   }
 
-  if (newChunks.length) add(newChunks[0]);
+  const shuffledNew = newChunks.slice();
+  for (let i = shuffledNew.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = shuffledNew[i];
+    shuffledNew[i] = shuffledNew[j];
+    shuffledNew[j] = tmp;
+  }
+  shuffledNew.slice(0, maxNew).forEach(add);
 
-  due.filter((c) => {
-    const prog = progressMap[c.chunk_id];
-    return prog && prog.srs_stage >= 1 && prog.srs_stage <= 3;
-  }).slice(0, 2).forEach(add);
-
-  due.filter((c) => {
-    const prog = progressMap[c.chunk_id];
-    return prog && prog.srs_stage >= 4;
-  }).slice(0, 1).forEach(add);
+  const reviewPool = sortReviewCandidates_(due.filter((c) => !isNewChunk(c)), progressMap);
+  reviewPool.slice(0, mix.reviewCount).forEach(add);
 
   if (selected.length < 2) {
-    due.filter((c) => !isNewChunk(c)).slice(0, 4).forEach(add);
-  }
-  if (selected.length < 2 && newChunks.length > 1) {
-    add(newChunks[1]);
+    sortReviewCandidates_(due.filter((c) => !used[c.chunk_id]), progressMap).forEach(add);
   }
   if (selected.length < 2) {
-    due.slice(0, 4).forEach(add);
+    newChunks.forEach(add);
+  }
+  if (selected.length < 2) {
+    due.slice(0, 5).forEach(add);
   }
   if (selected.length < 2) {
     const templates = getPassageTemplatesForBand_(band);
@@ -1739,7 +1806,7 @@ function selectChunksForPassage_(dueData, progressMap, index, band, excludeMap, 
     }
   }
 
-  return selected.slice(0, 4);
+  return selected.slice(0, 5);
 }
 
 function chunksCacheKey_(chunks) {
@@ -1858,7 +1925,7 @@ function generateDynamicPassage_(userId, band, index, progressMap, excludePassag
   if (cached) return cached;
 
   let lastErr = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < PASSAGE_GENERATION_MAX_ATTEMPTS; attempt++) {
     let generated = null;
     try {
       generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, '', attempt, 'passage');
@@ -1901,7 +1968,7 @@ const PASSAGE_SYSTEM_PROMPT_ = [
   '',
   'Follow these principles without exception:',
   '',
-  '1. COMPREHENSIBLE INPUT (true i+1). The words AROUND the target chunks must be ones the learner already knows — at or below the stated CEFR band. The target chunks are the ONLY new or practiced element (the "+1"). Never place an unknown word next to a target chunk; the learner must be able to lean on known context.',
+  '1. COMPREHENSIBLE INPUT (true i+1). The words AROUND the target chunks must be ones the learner already knows — at or below the stated CEFR band. The target chunks are the ONLY new or practiced element (the "+1"). Never place an unknown word next to a target chunk; the learner must be able to lean on known context. When several target chunks appear together, keep the connecting text simple and familiar so the chunks remain individually inferable; never let two unfamiliar chunks sit adjacent without known words between them.',
   '',
   '2. INFERABILITY. For each target chunk, the situation must give concrete cues to its meaning, so a learner who does not yet know the chunk could reasonably guess it from context — without a dictionary.',
   '',
@@ -1965,7 +2032,7 @@ function buildPassageUserPrompt_(chunks, band, index, revisionHint) {
   const cefrHint = band === 'A1A2' ? 'A1/A2' : band;
   const lines = [
     `CEFR band: ${cefrHint}`,
-    'Length: 3 to 6 sentences, 60 to 120 words total.',
+    'Length: 4 to 7 sentences, 70 to 150 words total.',
     '',
     'Target chunks (embed ALL of them, each at least once):',
     '',
@@ -2216,12 +2283,12 @@ function describePassageQualityFailure_(generated) {
   if (!ja) reasons.push('empty ja_translation');
 
   const sentences = text.split(/[.!?]+/).filter((s) => s.trim().length > 0);
-  if (sentences.length < 3) reasons.push('too few sentences (' + sentences.length + ')');
-  if (sentences.length > 6) reasons.push('too many sentences (' + sentences.length + ')');
+  if (sentences.length < 4) reasons.push('too few sentences (' + sentences.length + ')');
+  if (sentences.length > 7) reasons.push('too many sentences (' + sentences.length + ')');
 
   const words = text.split(/\s+/).filter(Boolean);
-  if (words.length < 40) reasons.push('too few words (' + words.length + ')');
-  if (words.length > 140) reasons.push('too many words (' + words.length + ')');
+  if (words.length < 60) reasons.push('too few words (' + words.length + ')');
+  if (words.length > 160) reasons.push('too many words (' + words.length + ')');
 
   const targets = generated?.target_chunks || [];
   if (targets.length < 2) reasons.push('target_chunks < 2');
@@ -2265,7 +2332,7 @@ function logPassageGenerationFailure_(attempt, err, generated, chunks) {
   if (generated) repairPassageTargetChunkSpans_(generated, chunks);
   const reasons = generated ? describePassageQualityFailure_(generated) : [];
   const msg = String(err && err.message || err);
-  Logger.log('Passage attempt ' + (attempt + 1) + '/3 failed: ' + msg
+  Logger.log('Passage attempt ' + (attempt + 1) + '/' + PASSAGE_GENERATION_MAX_ATTEMPTS + ' failed: ' + msg
     + (reasons.length ? ' | detail: ' + reasons.join('; ') : ''));
 }
 
@@ -2509,7 +2576,7 @@ function generatePassageWithCritique_(chunks, band, index, progressMap, apiKey) 
   let revisionHint = '';
   let lastErr = null;
 
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < PASSAGE_GENERATION_MAX_ATTEMPTS; attempt++) {
     let generated = null;
     try {
       generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, revisionHint, attempt, 'warmup');
@@ -2738,9 +2805,13 @@ function handleLogEncounter_(body) {
   if (rows.length > 0) {
     const startRow = sheet.getLastRow() + 1;
     sheet.getRange(startRow, 1, rows.length, rows[0].length).setValues(rows);
-    if (signal === 'got_it' || signal === 'still_hard' || signal === 'passive' || signal === 'skipped') {
+    if (signal === 'got_it' || signal === 'still_hard') {
       chunkIds.forEach((chunkId) => {
         updateProgressForChunk_(userId, chunkId, passageId, signal);
+      });
+    } else if (signal === 'exposure') {
+      chunkIds.forEach((chunkId) => {
+        updateExposureForChunk_(userId, chunkId, passageId);
       });
     }
   }

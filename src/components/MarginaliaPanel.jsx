@@ -36,10 +36,20 @@ function StageDisplay({ stage, status }) {
   );
 }
 
-export function MarginaliaPanel({ chunk, isOpen, onClose, isFading, clozePending }) {
+export function MarginaliaPanel({
+  chunk,
+  isOpen,
+  onClose,
+  isFading,
+  clozePending,
+  evaluation,
+  onEvaluate,
+  actionsDisabled,
+}) {
   const { locale, t } = useI18n();
   const emptyMessage = clozePending ? t.clozeReveal : t.marginaliaEmpty;
   const gloss = chunk ? resolveChunkGloss(chunk.text, chunk, locale) : '';
+  const evaluated = evaluation === 'got_it' || evaluation === 'still_hard';
 
   return (
     <aside className={`marginalia ${isOpen ? 'is-open' : ''}`}>
@@ -73,6 +83,32 @@ export function MarginaliaPanel({ chunk, isOpen, onClose, isFading, clozePending
             <div className="note__example">
               <span className="note__example-label">{t.example}</span>
               {chunk.example}
+            </div>
+            <div className="note__actions">
+              {evaluated ? (
+                <p className="note__evaluated" aria-live="polite">
+                  {evaluation === 'got_it' ? t.chunkEvaluatedOk : t.chunkEvaluatedHold}
+                </p>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn--ghost note__action-btn"
+                    disabled={actionsDisabled}
+                    onClick={() => onEvaluate?.('got_it')}
+                  >
+                    {t.chunkOk}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--ghost note__action-btn"
+                    disabled={actionsDisabled}
+                    onClick={() => onEvaluate?.('still_hard')}
+                  >
+                    {t.chunkHold}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}

@@ -4,14 +4,14 @@ export const DEFAULT_GAS_URL =
 
 export const USER_ID = 'naoya';
 
-// Passive encounter is logged after this many seconds on a passage.
-export const READING_TIME_LIMIT_SEC = 30;
+// Passive encounter is no longer logged — timer is display-only reading guide.
+export const READING_TIME_LIMIT_SEC = 60;
 
 // Probability (0–1) that one target chunk is shown as a cloze blank per passage.
 export const CLOZE_PROBABILITY = 0.3;
 
 /** Number of passages to prefetch ahead while reading. */
-export const PREFETCH_QUEUE_SIZE = 3;
+export const PREFETCH_QUEUE_SIZE = 1;
 
 /** Max wait for GAS on "Got it" advance before local fallback (ms). */
 export const ADVANCE_GAS_TIMEOUT_MS = 3500;

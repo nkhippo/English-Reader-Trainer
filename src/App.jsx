@@ -96,7 +96,7 @@ export default function App() {
     await refreshStats(cefrBand);
   }, [cefrBand, refreshStats]);
 
-  const { consumePrefetched, takeQueuedPassage, fillQueue, clearPrefetch } = usePassagePrefetch({
+  const { consumePrefetched, takeQueuedPassage, fillQueue } = usePassagePrefetch({
     cefrBand,
     seenPassageIds: passages.map((p) => p.id),
     seenPassages: passages,
@@ -104,15 +104,10 @@ export default function App() {
     enabled: !loading && passages.length > 0,
   });
 
-  const onBeforeAdvance = useCallback(() => {
-    clearPrefetch();
-  }, [clearPrefetch]);
-
   const reader = useReader(passages, {
     passagesRef,
     onProgressUpdate: handleProgressUpdate,
     onAdvancePastEnd: () => advancePastEndRef.current(),
-    onBeforeAdvance,
   });
 
   useEffect(() => {
@@ -193,13 +188,14 @@ export default function App() {
         <PassageView
           passage={reader.passage}
           activeChunkId={reader.activeChunkId}
+          chunkEvaluations={reader.chunkEvaluations}
           clozeChunkId={reader.clozeChunkId}
           clozeRevealed={reader.clozeRevealed}
           isTransitioning={reader.isTransitioning}
           transitionDirection={reader.transitionDirection}
           onChunkClick={reader.handleChunkClick}
           onBackgroundClick={reader.showTranslation}
-          onSwipeNext={() => reader.advanceToNext()}
+          onSwipeNext={() => reader.handleNext()}
           onSwipePrev={reader.prevPassage}
         />
         <MarginaliaPanel
@@ -208,14 +204,19 @@ export default function App() {
           onClose={reader.closeMarginalia}
           isFading={false}
           clozePending={!!reader.clozeChunkId && !reader.clozeRevealed}
+          evaluation={reader.activeChunk ? reader.chunkEvaluations[reader.activeChunk.id] : null}
+          onEvaluate={(signal) => {
+            if (reader.activeChunk) {
+              void reader.evaluateChunk(reader.activeChunk.id, signal);
+            }
+          }}
+          actionsDisabled={reader.actionsDisabled || reader.isSaving}
         />
       </main>
 
       <Footer
-        onStillHard={reader.handleStillHard}
-        onGotIt={reader.handleGotIt}
+        onNext={reader.handleNext}
         onSuspend={reader.pauseReading}
-        hardFlash={reader.hardFlash}
         isProcessing={reader.isSaving}
         actionsDisabled={
           reader.actionsDisabled
