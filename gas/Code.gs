@@ -9,12 +9,15 @@
  * Manual setup (Apps Script editor):
  *   1. setupSheets() — once
  *   2. importChunksFromCefr() — after cefr_*.json in Drive shared/
- *   3. preparePromptRenewalRefresh() — once before re-enrich after prompt renewal
+ *   3. preparePromptRenewalRefresh() — clears passage cache; bump ENRICH_PROMPT_VERSION + enrich for stale rows
+ *   3b. migrateChunksAddEnrichVersionColumn() — once on existing spreadsheets
  *   4. enrichAllTranslations() — runs until remaining = 0
  *   5. migrateChunksAddEnTranslationColumn() — once on existing spreadsheets
  *   6. enrichAllEnglishGlosses() — runs until remaining = 0
  *   7. generateTemplateBatch_(band, count) — optional template samples for review
- *   8. Redeploy Web App after code changes
+ *   8. setupNightlyWarmupTrigger() — once, schedules nightly passage warmup
+ *   9. reportTokenUsage_() — purpose/model token summary from token_usage sheet
+ *  10. Redeploy Web App after code changes
  */
 
 const SHEET_NAMES = {
@@ -22,12 +25,13 @@ const SHEET_NAMES = {
   PROGRESS: 'user_progress',
   PASSAGES: 'passages_meta',
   ENCOUNTERS: 'encounter_log',
+  TOKEN_USAGE: 'token_usage',
 };
 
 const SHEET_HEADERS = {
   [SHEET_NAMES.CHUNKS]: [
     'chunk_id', 'text', 'type', 'cefr', 'pos', 'ja_translation', 'en_translation',
-    'example_sentence', 'audio_drive_url', 'created_at',
+    'example_sentence', 'audio_drive_url', 'created_at', 'enrich_version',
   ],
   [SHEET_NAMES.PROGRESS]: [
     'user_id', 'chunk_id', 'encounter_count', 'distinct_passages_count',
@@ -42,6 +46,10 @@ const SHEET_HEADERS = {
   [SHEET_NAMES.ENCOUNTERS]: [
     'event_id', 'user_id', 'chunk_id', 'passage_id',
     'read_at', 'signal', 'time_on_page_ms',
+  ],
+  [SHEET_NAMES.TOKEN_USAGE]: [
+    'ts', 'model', 'purpose', 'input_tokens', 'output_tokens',
+    'cache_creation_input_tokens', 'cache_read_input_tokens', 'retry_index',
   ],
 };
 
@@ -67,6 +75,147 @@ const ENRICH_SAFETY_CONTINUE_MS = 6.5 * 60 * 1000;
 const ENRICH_CONTINUE_DELAY_MS = 30 * 1000;
 const ENRICH_CONTINUE_HANDLER = 'enrichAllTranslationsContinue_';
 const ENRICH_EN_CONTINUE_HANDLER = 'enrichAllEnglishGlossesContinue_';
+/** Bump when ja/en enrich prompts change — only stale rows are re-enriched. */
+const ENRICH_PROMPT_VERSION = 1;
+const WARMUP_NIGHTLY_HANDLER = 'runNightlyWarmup_';
+
+// ===== Token usage logging =====
+
+function ensureTokenUsageSheet_() {
+  const ss = getSpreadsheet_();
+  let sheet = ss.getSheetByName(SHEET_NAMES.TOKEN_USAGE);
+  const headers = SHEET_HEADERS[SHEET_NAMES.TOKEN_USAGE];
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAMES.TOKEN_USAGE);
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+    return sheet;
+  }
+  const existing = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (existing[0] !== headers[0]) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function logTokenUsage_(record) {
+  try {
+    const sheet = ensureTokenUsageSheet_();
+    sheet.appendRow([
+      record.ts || new Date().toISOString(),
+      record.model || '',
+      record.purpose || '',
+      record.input_tokens || 0,
+      record.output_tokens || 0,
+      record.cache_creation_input_tokens || 0,
+      record.cache_read_input_tokens || 0,
+      record.retry_index != null ? record.retry_index : 0,
+    ]);
+  } catch (err) {
+    Logger.log('logTokenUsage_ failed: ' + err);
+  }
+}
+
+function recordAnthropicUsage_(body, model, meta) {
+  const usage = (body && body.usage) || {};
+  logTokenUsage_({
+    ts: new Date().toISOString(),
+    model: model || '',
+    purpose: (meta && meta.purpose) || '',
+    input_tokens: usage.input_tokens || 0,
+    output_tokens: usage.output_tokens || 0,
+    cache_creation_input_tokens: usage.cache_creation_input_tokens || 0,
+    cache_read_input_tokens: usage.cache_read_input_tokens || 0,
+    retry_index: meta && meta.retry_index != null ? meta.retry_index : 0,
+  });
+}
+
+/**
+ * Summarize token_usage since an ISO timestamp (default: last 7 days).
+ * Run manually in the Apps Script editor.
+ */
+function reportTokenUsage_(sinceIso) {
+  ensureTokenUsageSheet_();
+  const sheet = getSheet_(SHEET_NAMES.TOKEN_USAGE);
+  if (sheet.getLastRow() < 2) {
+    Logger.log('token_usage: no rows yet');
+    return { rows: 0, by_purpose: {} };
+  }
+
+  const cutoff = sinceIso
+    ? new Date(sinceIso).getTime()
+    : Date.now() - 7 * 24 * 3600000;
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const col = indexColumns_(headers);
+  const agg = {};
+
+  for (let r = 1; r < data.length; r++) {
+    const ts = new Date(data[r][col.ts]).getTime();
+    if (isNaN(ts) || ts < cutoff) continue;
+    const purpose = String(data[r][col.purpose] || 'unknown');
+    const model = String(data[r][col.model] || 'unknown');
+    const key = purpose + '\t' + model;
+    if (!agg[key]) {
+      agg[key] = {
+        purpose, model, calls: 0, input_tokens: 0, output_tokens: 0, cache_read: 0,
+      };
+    }
+    agg[key].calls += 1;
+    agg[key].input_tokens += Number(data[r][col.input_tokens]) || 0;
+    agg[key].output_tokens += Number(data[r][col.output_tokens]) || 0;
+    agg[key].cache_read += Number(data[r][col.cache_read_input_tokens]) || 0;
+  }
+
+  const lines = ['purpose\tmodel\tcalls\tin_tok\tout_tok\tcache_read'];
+  Object.keys(agg).sort().forEach((key) => {
+    const row = agg[key];
+    lines.push([
+      row.purpose, row.model, row.calls,
+      row.input_tokens, row.output_tokens, row.cache_read,
+    ].join('\t'));
+  });
+  Logger.log(lines.join('\n'));
+  return { rows: data.length - 1, by_purpose: agg, table: lines.join('\n') };
+}
+
+function anthropicRequestHeaders_(apiKey) {
+  return {
+    'x-api-key': apiKey,
+    'anthropic-version': '2023-06-01',
+    'content-type': 'application/json',
+    'anthropic-beta': 'prompt-caching-2024-07-31',
+  };
+}
+
+function fetchAnthropicBody_(payload, apiKey, usageMeta) {
+  const res = UrlFetchApp.fetch(ANTHROPIC_API_URL, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: anthropicRequestHeaders_(apiKey),
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true,
+  });
+
+  if (res.getResponseCode() !== 200) {
+    throw new Error(`Anthropic ${res.getResponseCode()}: ${res.getContentText().slice(0, 400)}`);
+  }
+
+  const body = JSON.parse(res.getContentText());
+  if (usageMeta) {
+    recordAnthropicUsage_(body, payload.model, usageMeta);
+  }
+  return body;
+}
+
+function passageSystemBlocks_() {
+  return [{
+    type: 'text',
+    text: PASSAGE_SYSTEM_PROMPT_,
+    cache_control: { type: 'ephemeral' },
+  }];
+}
 
 // ===== HTTP =====
 
@@ -175,6 +324,7 @@ function buildChunkRow_(entry, type, pos, example, now) {
     example || entry.example || '',
     '',
     now,
+    '',
   ];
 }
 
@@ -347,6 +497,7 @@ function auditTranslationCoverage() {
     covered: total - remaining,
     remaining,
     percent: total ? Math.round(((total - remaining) / total) * 100) : 100,
+    enrich_prompt_version: ENRICH_PROMPT_VERSION,
   };
   Logger.log(JSON.stringify(result));
   return result;
@@ -356,6 +507,7 @@ function enrichTranslationsBatch_(batchSize) {
   const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set in Script Properties');
 
+  ensureChunksEnrichVersionColumn_();
   const sheet = getSheet_(SHEET_NAMES.CHUNKS);
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
@@ -363,8 +515,7 @@ function enrichTranslationsBatch_(batchSize) {
   const pending = [];
 
   for (let r = 1; r < data.length && pending.length < batchSize; r++) {
-    const ja = String(data[r][col.ja_translation] || '').trim();
-    if (ja) continue;
+    if (!rowNeedsJaEnrich_(data[r], col)) continue;
     pending.push({
       row: r + 1,
       chunk_id: data[r][col.chunk_id],
@@ -387,6 +538,9 @@ function enrichTranslationsBatch_(batchSize) {
     }
     if (item.example_sentence && !row.example_sentence) {
       sheet.getRange(row.row, col.example_sentence + 1).setValue(item.example_sentence);
+    }
+    if (item.ja_translation) {
+      sheet.getRange(row.row, col.enrich_version + 1).setValue(ENRICH_PROMPT_VERSION);
     }
   });
 
@@ -422,23 +576,8 @@ function extractJsonArrayFromText_(text) {
   throw new Error('Truncated JSON array — reduce ENRICH_BATCH_SIZE or raise max_tokens');
 }
 
-function fetchAnthropicEnrichArray_(payload, apiKey) {
-  const res = UrlFetchApp.fetch(ANTHROPIC_API_URL, {
-    method: 'post',
-    contentType: 'application/json',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    payload: JSON.stringify(payload),
-    muteHttpExceptions: true,
-  });
-
-  if (res.getResponseCode() !== 200) {
-    throw new Error(`Anthropic ${res.getResponseCode()}: ${res.getContentText().slice(0, 400)}`);
-  }
-
-  const body = JSON.parse(res.getContentText());
+function fetchAnthropicEnrichArray_(payload, apiKey, usageMeta) {
+  const body = fetchAnthropicBody_(payload, apiKey, usageMeta);
   if (!body.content || !body.content.length) throw new Error('Empty Claude response');
   const stopReason = body.stop_reason || '';
   if (stopReason === 'max_tokens') {
@@ -448,22 +587,25 @@ function fetchAnthropicEnrichArray_(payload, apiKey) {
   return { items, stopReason };
 }
 
-function callClaudeEnrichWithSplitRetry_(items, apiKey, buildPayload) {
+function callClaudeEnrichWithSplitRetry_(items, apiKey, buildPayload, purpose, retryIndex) {
   try {
-    const result = fetchAnthropicEnrichArray_(buildPayload(items), apiKey);
+    const result = fetchAnthropicEnrichArray_(buildPayload(items), apiKey, {
+      purpose: purpose,
+      retry_index: retryIndex || 0,
+    });
     return result.items;
   } catch (err) {
     if (items.length <= ENRICH_MIN_SPLIT_SIZE) throw err;
     Logger.log('Enrich batch failed — retrying as two halves: ' + err);
     const mid = Math.ceil(items.length / 2);
-    return callClaudeEnrichWithSplitRetry_(items.slice(0, mid), apiKey, buildPayload)
-      .concat(callClaudeEnrichWithSplitRetry_(items.slice(mid), apiKey, buildPayload));
+    return callClaudeEnrichWithSplitRetry_(items.slice(0, mid), apiKey, buildPayload, purpose, 1)
+      .concat(callClaudeEnrichWithSplitRetry_(items.slice(mid), apiKey, buildPayload, purpose, 1));
   }
 }
 
 /** Fetch enrich results; retry any pending chunk_ids that were omitted from the response. */
-function fetchEnrichBatchResults_(pending, apiKey, buildPayload) {
-  let enriched = callClaudeEnrichWithSplitRetry_(pending, apiKey, buildPayload);
+function fetchEnrichBatchResults_(pending, apiKey, buildPayload, purpose) {
+  let enriched = callClaudeEnrichWithSplitRetry_(pending, apiKey, buildPayload, purpose, 0);
   let attempts = 0;
 
   while (attempts < 3) {
@@ -476,7 +618,7 @@ function fetchEnrichBatchResults_(pending, apiKey, buildPayload) {
 
     Logger.log('Enrich incomplete: got ' + enriched.length + '/' + pending.length
       + ' — retrying ' + missing.length + ' missing items');
-    const more = callClaudeEnrichWithSplitRetry_(missing, apiKey, buildPayload);
+    const more = callClaudeEnrichWithSplitRetry_(missing, apiKey, buildPayload, purpose, attempts + 1);
     if (!more.length) break;
     enriched = enriched.concat(more);
     attempts += 1;
@@ -553,20 +695,67 @@ ${JSON.stringify(input)}`,
 }
 
 function callClaudeEnrich_(items, apiKey) {
-  return fetchEnrichBatchResults_(items, apiKey, buildJaEnrichPayload_);
+  return fetchEnrichBatchResults_(items, apiKey, buildJaEnrichPayload_, 'enrich_ja');
 }
 
 function callClaudeEnrichEnglish_(items, apiKey) {
-  return fetchEnrichBatchResults_(items, apiKey, buildEnEnrichPayload_);
+  return fetchEnrichBatchResults_(items, apiKey, buildEnEnrichPayload_, 'enrich_en');
+}
+
+function ensureChunksEnrichVersionColumn_() {
+  const sheet = getSheet_(SHEET_NAMES.CHUNKS);
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (headers.indexOf('enrich_version') >= 0) return false;
+  sheet.insertColumnAfter(headers.length);
+  sheet.getRange(1, headers.length + 1).setValue('enrich_version');
+  Logger.log('Added enrich_version column to chunks_master.');
+  return true;
+}
+
+/** Run once on existing spreadsheets missing enrich_version. */
+function migrateChunksAddEnrichVersionColumn() {
+  ensureChunksEnrichVersionColumn_();
+  const sheet = getSheet_(SHEET_NAMES.CHUNKS);
+  const data = sheet.getDataRange().getValues();
+  const col = indexColumns_(data[0]);
+  let backfilled = 0;
+  for (let r = 1; r < data.length; r++) {
+    const ver = Number(data[r][col.enrich_version]) || 0;
+    if (ver > 0) continue;
+    const ja = String(data[r][col.ja_translation] || '').trim();
+    if (ja) {
+      sheet.getRange(r + 1, col.enrich_version + 1).setValue(ENRICH_PROMPT_VERSION);
+      backfilled += 1;
+    }
+  }
+  Logger.log(JSON.stringify({
+    ok: true,
+    enrich_prompt_version: ENRICH_PROMPT_VERSION,
+    backfilled,
+  }));
+  return { ok: true, enrich_prompt_version: ENRICH_PROMPT_VERSION, backfilled };
+}
+
+function rowNeedsJaEnrich_(row, col) {
+  const ja = String(row[col.ja_translation] || '').trim();
+  const ver = Number(row[col.enrich_version]) || 0;
+  return !ja || ver !== ENRICH_PROMPT_VERSION;
+}
+
+function rowNeedsEnEnrich_(row, col) {
+  const en = String(row[col.en_translation] || '').trim();
+  const ver = Number(row[col.enrich_version]) || 0;
+  return !en || ver !== ENRICH_PROMPT_VERSION;
 }
 
 function countMissingTranslations_() {
+  ensureChunksEnrichVersionColumn_();
   const sheet = getSheet_(SHEET_NAMES.CHUNKS);
   const data = sheet.getDataRange().getValues();
-  const jaCol = data[0].indexOf('ja_translation');
+  const col = indexColumns_(data[0]);
   let count = 0;
   for (let r = 1; r < data.length; r++) {
-    if (!String(data[r][jaCol] || '').trim()) count++;
+    if (rowNeedsJaEnrich_(data[r], col)) count++;
   }
   return count;
 }
@@ -646,6 +835,7 @@ function auditEnglishGlossCoverage() {
     covered: total - remaining,
     remaining,
     percent: total ? Math.round(((total - remaining) / total) * 100) : 100,
+    enrich_prompt_version: ENRICH_PROMPT_VERSION,
   };
   Logger.log(JSON.stringify(result));
   return result;
@@ -656,6 +846,7 @@ function enrichEnglishGlossesBatch_(batchSize) {
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set in Script Properties');
 
   ensureChunksEnTranslationColumn_();
+  ensureChunksEnrichVersionColumn_();
   const sheet = getSheet_(SHEET_NAMES.CHUNKS);
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
@@ -663,8 +854,7 @@ function enrichEnglishGlossesBatch_(batchSize) {
   const pending = [];
 
   for (let r = 1; r < data.length && pending.length < batchSize; r++) {
-    const en = String(data[r][col.en_translation] || '').trim();
-    if (en) continue;
+    if (!rowNeedsEnEnrich_(data[r], col)) continue;
     pending.push({
       row: r + 1,
       chunk_id: data[r][col.chunk_id],
@@ -685,6 +875,7 @@ function enrichEnglishGlossesBatch_(batchSize) {
     if (!row) return;
     if (item.en_translation) {
       sheet.getRange(row.row, col.en_translation + 1).setValue(item.en_translation);
+      sheet.getRange(row.row, col.enrich_version + 1).setValue(ENRICH_PROMPT_VERSION);
     }
   });
 
@@ -694,12 +885,13 @@ function enrichEnglishGlossesBatch_(batchSize) {
 
 function countMissingEnglishGlosses_() {
   ensureChunksEnTranslationColumn_();
+  ensureChunksEnrichVersionColumn_();
   const sheet = getSheet_(SHEET_NAMES.CHUNKS);
   const data = sheet.getDataRange().getValues();
-  const enCol = data[0].indexOf('en_translation');
+  const col = indexColumns_(data[0]);
   let count = 0;
   for (let r = 1; r < data.length; r++) {
-    if (!String(data[r][enCol] || '').trim()) count++;
+    if (rowNeedsEnEnrich_(data[r], col)) count++;
   }
   return count;
 }
@@ -1225,6 +1417,7 @@ function buildPassageForUser_(userId, band, index, progressMap, excludePassageId
     if (chunks.length >= 2) {
       const cacheKey = chunksCacheKey_(chunks);
       passage = findCachedPassage_(cacheKey, index, band, progressMap, excludePassageIds)
+        || findCachedPassageContainingChunks_(chunks, index, band, progressMap, excludePassageIds)
         || pickTemplateCoveringChunks_(band, index, progressMap, excludePassageIds, chunks, templateExcludeMap);
     }
 
@@ -1329,10 +1522,15 @@ function generateDynamicPassageClaude_(userId, band, index, progressMap, exclude
   }
   if (chunks.length < 2) throw new Error('Not enough chunks to generate passage');
 
+  const cacheKey = chunksCacheKey_(chunks);
+  const cached = findCachedPassage_(cacheKey, index, band, progressMap, excludePassageIds)
+    || findCachedPassageContainingChunks_(chunks, index, band, progressMap, excludePassageIds);
+  if (cached) return cached;
+
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index);
+      const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, '', attempt, 'passage');
       if (!validatePassageChunks_(generated.text, chunks)) {
         throw new Error('Generated passage missing target chunks');
       }
@@ -1470,6 +1668,58 @@ function findCachedPassage_(chunkKey, index, band, progressMap, excludePassageId
   return pick;
 }
 
+/**
+ * Reuse a cached passage whose target chunks are a superset of the requested set.
+ * Preserves contextual variety: extra chunks in cache do not block reuse for due subsets.
+ */
+function findCachedPassageContainingChunks_(chunks, index, band, progressMap, excludePassageIds) {
+  const requested = {};
+  (chunks || []).forEach((c) => { if (c && c.chunk_id) requested[c.chunk_id] = true; });
+  const requestedIds = Object.keys(requested);
+  if (requestedIds.length < 2) return null;
+
+  const sheet = getSheet_(SHEET_NAMES.PASSAGES);
+  if (sheet.getLastRow() < 2) return null;
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const col = indexColumns_(headers);
+  const exclude = {};
+  (excludePassageIds || []).forEach((id) => { if (id) exclude[id] = true; });
+  const candidates = [];
+
+  for (let r = data.length - 1; r >= 1; r--) {
+    const passageId = String(data[r][col.passage_id] || '');
+    if (exclude[passageId]) continue;
+    const cachedIds = String(data[r][col.target_chunk_ids] || '').split(',').filter(Boolean);
+    if (cachedIds.length < requestedIds.length) continue;
+    const hasAll = requestedIds.every((id) => cachedIds.indexOf(id) >= 0);
+    if (!hasAll) continue;
+    const exactKey = cachedIds.slice().sort().join(',');
+    const requestKey = requestedIds.slice().sort().join(',');
+    if (exactKey === requestKey) continue;
+
+    const verdict = col.critique_verdict !== undefined
+      ? String(data[r][col.critique_verdict] || '').toLowerCase()
+      : '';
+    if (verdict === 'revise') continue;
+    const fileId = data[r][col.drive_file_id];
+    if (!fileId) continue;
+    try {
+      const json = JSON.parse(DriveApp.getFileById(fileId).getBlob().getDataAsString('UTF-8'));
+      const hydrated = hydratePassageFromJson_(json, index, band, progressMap);
+      hydrated._critique_verdict = verdict;
+      candidates.push(hydrated);
+    } catch (e) { /* skip bad cache */ }
+  }
+
+  if (candidates.length === 0) return null;
+  const passed = candidates.filter((c) => c._critique_verdict === 'pass');
+  const pool = passed.length ? passed : candidates;
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  delete pick._critique_verdict;
+  return pick;
+}
+
 function generateDynamicPassage_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds) {
   const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
@@ -1488,13 +1738,14 @@ function generateDynamicPassage_(userId, band, index, progressMap, excludePassag
   if (chunks.length < 2) throw new Error('Not enough chunks to generate passage');
 
   const cacheKey = chunksCacheKey_(chunks);
-  const cached = findCachedPassage_(cacheKey, index, band, progressMap, excludePassageIds);
+  const cached = findCachedPassage_(cacheKey, index, band, progressMap, excludePassageIds)
+    || findCachedPassageContainingChunks_(chunks, index, band, progressMap, excludePassageIds);
   if (cached) return cached;
 
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index);
+      const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, '', attempt, 'passage');
       if (!validatePassageChunks_(generated.text, chunks)) {
         throw new Error('Generated passage missing target chunks');
       }
@@ -1516,19 +1767,21 @@ function generateDynamicPassage_(userId, band, index, progressMap, excludePassag
   throw lastErr || new Error('Passage generation failed');
 }
 
-function callClaudeGeneratePassage_(chunks, band, apiKey, index, revisionHint) {
-  const cefrHint = band === 'A1A2' ? 'A1/A2' : band;
+function callClaudeGeneratePassage_(chunks, band, apiKey, index, revisionHint, retryIndex, purpose) {
   const payload = {
     model: MODEL_PASSAGE,
     max_tokens: 4096,
-    system: PASSAGE_SYSTEM_PROMPT_,
+    system: passageSystemBlocks_(),
     messages: [{
       role: 'user',
       content: buildPassageUserPrompt_(chunks, band, index, revisionHint),
     }],
   };
 
-  return callAnthropicJson_(payload, apiKey);
+  return callAnthropicJson_(payload, apiKey, {
+    purpose: purpose || 'passage',
+    retry_index: retryIndex || 0,
+  });
 }
 
 const PASSAGE_SYSTEM_PROMPT_ = [
@@ -1683,7 +1936,7 @@ function extractSentenceContainingChunk_(text, chunkText) {
   return text.slice(start, end).trim();
 }
 
-function callClaudeCritiquePassage_(generated, chunks, band, index, apiKey) {
+function callClaudeCritiquePassage_(generated, chunks, band, index, apiKey, retryIndex, purpose) {
   const cefrHint = band === 'A1A2' ? 'A1/A2' : band;
   const chunkLines = chunks.map((c) => {
     const row = index[String(c.text).toLowerCase().trim()] || c;
@@ -1692,58 +1945,74 @@ function callClaudeCritiquePassage_(generated, chunks, band, index, apiKey) {
     return `- "${c.text}"${meaning ? ` (${meaning})` : ''}${priors.length ? `\n  prior: ${priors.join(' | ')}` : ''}`;
   }).join('\n');
 
+  const variableText = [
+    `CEFR band for this passage: ${cefrHint}`,
+    '',
+    'Passage:',
+    generated.text,
+    '',
+    'Japanese translation:',
+    generated.ja_translation,
+    '',
+    'Target chunks (with intended meaning):',
+    chunkLines,
+  ].join('\n');
+
   const payload = {
     model: MODEL_CRITIQUE,
     max_tokens: 2048,
     messages: [{
       role: 'user',
       content: [
-        `You are a strict reviewer of graded reading passages for CEFR ${cefrHint} learners of English. Score the passage on each criterion from 0 to 2 (0 = fails, 1 = weak, 2 = good). Be honest; this gates what learners see.`,
-        '',
-        'Passage:',
-        generated.text,
-        '',
-        'Japanese translation:',
-        generated.ja_translation,
-        '',
-        'Target chunks (with intended meaning):',
-        chunkLines,
-        '',
-        'Criteria:',
-        '- naturalness: reads like authentic English; no chunk was forced in awkwardly',
-        '- comprehensibility: surrounding vocabulary is within CEFR band; nothing harder than the target chunks themselves',
-        '- inferability: each target chunk\'s meaning can be guessed from the surrounding context',
-        '- chunk_integrity: every target chunk appears verbatim and is used correctly',
-        '- variety: genuinely different scenario/collocates/structure from the prior contexts (score 2 if no prior contexts were given)',
-        '- linguistic_variety: tense/person/voice fit the scene and CEFR band; not a default present-simple I-narrator',
-        '- concreteness: a vivid, specific situation rather than abstract filler',
-        '- translation_fidelity: the Japanese is accurate and natural',
-        '',
-        'Output ONLY JSON:',
-        '{',
-        '  "scores": {',
-        '    "naturalness": 0,',
-        '    "comprehensibility": 0,',
-        '    "inferability": 0,',
-        '    "chunk_integrity": 0,',
-        '    "variety": 0,',
-        '    "linguistic_variety": 0,',
-        '    "concreteness": 0,',
-        '    "translation_fidelity": 0',
-        '  },',
-        '  "total": 0,',
-        '  "verdict": "pass" or "revise",',
-        '  "problems": ["short bullet per issue"],',
-        '  "revision_hint": "one concrete instruction for regeneration, if verdict is revise"',
-        '}',
-        '',
-        'Pass threshold: total >= 13 AND no single criterion scores 0.',
-      ].join('\n'),
+        {
+          type: 'text',
+          text: CRITIQUE_CACHED_PROMPT_,
+          cache_control: { type: 'ephemeral' },
+        },
+        { type: 'text', text: variableText },
+      ],
     }],
   };
 
-  return callAnthropicJson_(payload, apiKey);
+  return callAnthropicJson_(payload, apiKey, {
+    purpose: purpose || 'critique',
+    retry_index: retryIndex || 0,
+  });
 }
+
+const CRITIQUE_CACHED_PROMPT_ = [
+  'You are a strict reviewer of graded reading passages for English learners. Score the passage on each criterion from 0 to 2 (0 = fails, 1 = weak, 2 = good). Be honest; this gates what learners see.',
+  '',
+  'Criteria:',
+  '- naturalness: reads like authentic English; no chunk was forced in awkwardly',
+  '- comprehensibility: surrounding vocabulary is within CEFR band; nothing harder than the target chunks themselves',
+  '- inferability: each target chunk\'s meaning can be guessed from the surrounding context',
+  '- chunk_integrity: every target chunk appears verbatim and is used correctly',
+  '- variety: genuinely different scenario/collocates/structure from the prior contexts (score 2 if no prior contexts were given)',
+  '- linguistic_variety: tense/person/voice fit the scene and CEFR band; not a default present-simple I-narrator',
+  '- concreteness: a vivid, specific situation rather than abstract filler',
+  '- translation_fidelity: the Japanese is accurate and natural',
+  '',
+  'Output ONLY JSON:',
+  '{',
+  '  "scores": {',
+  '    "naturalness": 0,',
+  '    "comprehensibility": 0,',
+  '    "inferability": 0,',
+  '    "chunk_integrity": 0,',
+  '    "variety": 0,',
+  '    "linguistic_variety": 0,',
+  '    "concreteness": 0,',
+  '    "translation_fidelity": 0',
+  '  },',
+  '  "total": 0,',
+  '  "verdict": "pass" or "revise",',
+  '  "problems": ["short bullet per issue"],',
+  '  "revision_hint": "one concrete instruction for regeneration, if verdict is revise"',
+  '}',
+  '',
+  'Pass threshold: total >= 13 AND no single criterion scores 0.',
+].join('\n');
 
 function critiquePasses_(critique) {
   if (!critique || !critique.scores) return false;
@@ -1761,23 +2030,9 @@ function critiquePasses_(critique) {
   return true;
 }
 
-function callAnthropicJson_(payload, apiKey) {
-  const res = UrlFetchApp.fetch(ANTHROPIC_API_URL, {
-    method: 'post',
-    contentType: 'application/json',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    payload: JSON.stringify(payload),
-    muteHttpExceptions: true,
-  });
-
-  if (res.getResponseCode() !== 200) {
-    throw new Error(`Anthropic ${res.getResponseCode()}: ${res.getContentText().slice(0, 400)}`);
-  }
-
-  const body = JSON.parse(res.getContentText());
+function callAnthropicJson_(payload, apiKey, usageMeta) {
+  const body = fetchAnthropicBody_(payload, apiKey, usageMeta);
+  if (!body.content || !body.content.length) throw new Error('Empty Claude response');
   const raw = body.content[0].text.trim().replace(/^```json?\s*/i, '').replace(/```\s*$/, '');
   return JSON.parse(raw);
 }
@@ -1949,28 +2204,37 @@ function registerPassageMeta_(passage, chunks, critique) {
 
 /**
  * Run ONCE before re-running enrich with renewed prompts (§ work-request).
- * Clears translation columns, removes legacy passage cache, adds critique columns.
+ * Clears legacy passage cache and adds critique columns.
+ * Chunk translations: bump ENRICH_PROMPT_VERSION in Code.gs, then enrichAllTranslations().
  */
 function preparePromptRenewalRefresh() {
-  const chunksCleared = clearChunksTranslationsForReenrich_();
   ensurePassagesCritiqueColumns_();
+  ensureChunksEnrichVersionColumn_();
   const passagesCleared = clearPassagesMetaAndDriveCache_();
   Logger.log(JSON.stringify({
     ok: true,
-    chunks_rows_cleared: chunksCleared,
     passages_meta_rows_cleared: passagesCleared,
+    enrich_prompt_version: ENRICH_PROMPT_VERSION,
+    note: 'Chunk translations are NOT cleared. Bump ENRICH_PROMPT_VERSION to re-enrich stale rows only.',
   }));
   return {
     ok: true,
-    chunks_rows_cleared: chunksCleared,
     passages_meta_rows_cleared: passagesCleared,
+    enrich_prompt_version: ENRICH_PROMPT_VERSION,
     next_steps: [
-      '1. enrichAllTranslations() until remaining = 0',
-      '2. enrichAllEnglishGlosses() until remaining = 0',
-      '3. Redeploy Web App (Manage deployments → New version)',
-      '4. generateTemplateBatch_("B1", 1) for sample review',
+      '1. If enrich prompts changed: increment ENRICH_PROMPT_VERSION in Code.gs, redeploy',
+      '2. enrichAllTranslations() until remaining = 0',
+      '3. enrichAllEnglishGlosses() until remaining = 0',
+      '4. setupNightlyWarmupTrigger() — optional nightly cache warmup',
+      '5. generateTemplateBatch_("B1", 1) for sample review',
     ],
   };
+}
+
+/** Emergency only: wipe all chunk translations (triggers full re-enrich). */
+function clearAllChunkTranslationsForReenrich() {
+  const rows = clearChunksTranslationsForReenrich_();
+  return { cleared_rows: rows, warning: 'Full re-enrich required. Prefer bumping ENRICH_PROMPT_VERSION instead.' };
 }
 
 /** Clear ja_translation, en_translation, example_sentence so enrich re-runs with new prompts. */
@@ -2043,14 +2307,14 @@ function generatePassageWithCritique_(chunks, band, index, progressMap, apiKey) 
 
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, revisionHint);
+      const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, revisionHint, attempt, 'warmup');
       if (!validatePassageChunks_(generated.text, chunks)) {
         throw new Error('Generated passage missing target chunks');
       }
       if (!validatePassageQuality_(generated)) {
         throw new Error('Generated passage failed quality checks');
       }
-      const critique = callClaudeCritiquePassage_(generated, chunks, band, index, apiKey);
+      const critique = callClaudeCritiquePassage_(generated, chunks, band, index, apiKey, attempt, 'warmup');
       if (!critiquePasses_(critique)) {
         revisionHint = critique.revision_hint || (critique.problems || []).join('; ');
         throw new Error('Critique revise: ' + revisionHint);
@@ -2099,12 +2363,12 @@ function generateTemplateBatch_(band, count) {
     const themeHint = themes[n % themes.length];
     const revisionHint = `Theme: ${themeHint}. Avoid openings similar to: ${excludeOpeners.join(' | ')}`;
 
-    const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, revisionHint);
+    const generated = callClaudeGeneratePassage_(chunks, band, apiKey, index, revisionHint, 0, 'template_batch');
     if (!validatePassageQuality_(generated)) {
       Logger.log('Template batch: quality fail, skipping');
       continue;
     }
-    const critique = callClaudeCritiquePassage_(generated, chunks, band, index, apiKey);
+    const critique = callClaudeCritiquePassage_(generated, chunks, band, index, apiKey, 0, 'template_batch');
     const chunkTexts = (generated.target_chunks || []).map((tc) => tc.text);
     const tpl = {
       passage_id: 'ps_gen_' + band.toLowerCase() + '_' + (n + 1),
@@ -2153,6 +2417,42 @@ function warmupPassagesForBand_(band, count) {
     }
   }
   return { band, generated, errors };
+}
+
+/** Install a daily trigger (3:00 project timezone) to warmup passages for all bands. Run once manually. */
+function setupNightlyWarmupTrigger() {
+  clearNightlyWarmupTriggers_();
+  ScriptApp.newTrigger(WARMUP_NIGHTLY_HANDLER)
+    .timeBased()
+    .everyDays(1)
+    .atHour(3)
+    .create();
+  Logger.log('Nightly warmup trigger installed (3:00 daily).');
+  return { ok: true, handler: WARMUP_NIGHTLY_HANDLER, hour: 3 };
+}
+
+function clearNightlyWarmupTriggers_() {
+  ScriptApp.getProjectTriggers().forEach((trigger) => {
+    if (trigger.getHandlerFunction() === WARMUP_NIGHTLY_HANDLER) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+}
+
+/** Trigger handler — do not run manually unless testing. */
+function runNightlyWarmup_() {
+  const bands = ['A1A2', 'B1', 'B2'];
+  const results = [];
+  bands.forEach((band) => {
+    try {
+      results.push(warmupPassagesForBand_(band, 3));
+    } catch (e) {
+      Logger.log('Nightly warmup ' + band + ': ' + e);
+      results.push({ band, error: String(e) });
+    }
+  });
+  Logger.log(JSON.stringify({ nightly_warmup: results }));
+  return results;
 }
 
 function shuffleArrayInPlace_(arr) {
