@@ -7,14 +7,22 @@ import { normalizePassagesFromApi } from '../lib/passages.js';
 /**
  * Keep a queue of prefetched passages while the user reads.
  */
-export function usePassagePrefetch({ cefrBand, seenPassageIds, seenPassages, enabled }) {
+export function usePassagePrefetch({
+  cefrBand,
+  seenPassageIds,
+  seenPassages,
+  getExcludeChunkIds,
+  enabled,
+}) {
   const queueRef = useRef([]);
   const inflightRef = useRef(null);
+  const prefetchGenerationRef = useRef(0);
   const bandRef = useRef(cefrBand);
   const seenRef = useRef([]);
   const passagesRef = useRef([]);
 
   const clearPrefetch = useCallback(() => {
+    prefetchGenerationRef.current += 1;
     queueRef.current = [];
     inflightRef.current = null;
   }, []);
@@ -25,19 +33,27 @@ export function usePassagePrefetch({ cefrBand, seenPassageIds, seenPassages, ena
   }, []);
 
   const sharesSessionChunks = useCallback((passage) => {
-    const exclude = new Set(chunkIdsFromPassages(passagesRef.current));
+    const exclude = new Set([
+      ...chunkIdsFromPassages(passagesRef.current),
+      ...(getExcludeChunkIds?.() || []),
+    ]);
     if (!exclude.size) return false;
     return (passage?.chunks || []).some((c) => exclude.has(c.id));
-  }, []);
+  }, [getExcludeChunkIds]);
 
   const fetchNextPassage = useCallback(async (extraExclude = []) => {
+    const generation = prefetchGenerationRef.current;
     const exclude = new Set([...seenRef.current, ...extraExclude, ...queueRef.current.map((p) => p.id)]);
-    const excludeChunkIds = chunkIdsFromPassages([
-      ...passagesRef.current,
-      ...queueRef.current,
-    ]);
+    const excludeChunkIds = [
+      ...new Set([
+        ...chunkIdsFromPassages([...passagesRef.current, ...queueRef.current]),
+        ...(getExcludeChunkIds?.() || []),
+      ]),
+    ];
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (generation !== prefetchGenerationRef.current) return null;
+
       const res = await fetchGeneratePassage({
         userId: USER_ID,
         cefr: bandRef.current,
@@ -55,24 +71,33 @@ export function usePassagePrefetch({ cefrBand, seenPassageIds, seenPassages, ena
     }
 
     return null;
-  }, [sharesSessionChunks]);
+  }, [getExcludeChunkIds, sharesSessionChunks]);
 
   const fillQueue = useCallback(async () => {
     if (!enabled) return;
 
     while (queueRef.current.length < PREFETCH_QUEUE_SIZE && !inflightRef.current) {
       const band = bandRef.current;
+      const generation = prefetchGenerationRef.current;
       inflightRef.current = (async () => {
         try {
           const next = await fetchNextPassage();
-          if (next && !isSeen(next) && !sharesSessionChunks(next) && bandRef.current === band) {
+          if (
+            generation === prefetchGenerationRef.current
+            && next
+            && !isSeen(next)
+            && !sharesSessionChunks(next)
+            && bandRef.current === band
+          ) {
             const ids = new Set(queueRef.current.map((p) => p.id));
             if (!ids.has(next.id)) queueRef.current.push(next);
           }
         } catch (err) {
           console.warn('[ERT] prefetch failed:', err);
         } finally {
-          inflightRef.current = null;
+          if (generation === prefetchGenerationRef.current) {
+            inflightRef.current = null;
+          }
         }
       })();
       await inflightRef.current;
@@ -87,8 +112,10 @@ export function usePassagePrefetch({ cefrBand, seenPassageIds, seenPassages, ena
   useEffect(() => {
     seenRef.current = seenPassageIds || [];
     passagesRef.current = seenPassages || [];
-    queueRef.current = queueRef.current.filter((p) => !seenRef.current.includes(p.id));
-  }, [seenPassageIds, seenPassages]);
+    queueRef.current = queueRef.current.filter(
+      (p) => !seenRef.current.includes(p.id) && !sharesSessionChunks(p),
+    );
+  }, [seenPassageIds, seenPassages, sharesSessionChunks]);
 
   useEffect(() => {
     if (!enabled || seenPassageIds.length === 0) return;

@@ -805,6 +805,13 @@ function getRecentChunkIds_(userId, hours) {
   return Object.keys(ids);
 }
 
+function resolveChunkIdForText_(text, index) {
+  const key = String(text).toLowerCase().trim();
+  const row = index[key];
+  if (row && row.chunk_id) return row.chunk_id;
+  return makeChunkId_(text);
+}
+
 function chunkIdsForPassageTemplates_(passageIds, band, index) {
   const exclude = {};
   if (!passageIds || !passageIds.length || !band || !index) return exclude;
@@ -815,8 +822,7 @@ function chunkIdsForPassageTemplates_(passageIds, band, index) {
     const tpl = byId[passageId];
     if (!tpl) return;
     (tpl.chunk_texts || []).forEach((text) => {
-      const row = index[String(text).toLowerCase().trim()];
-      if (row && row.chunk_id) exclude[row.chunk_id] = true;
+      exclude[resolveChunkIdForText_(text, index)] = true;
     });
   });
   return exclude;
@@ -872,10 +878,35 @@ function templateRecentChunkOverlap_(tpl, index, excludeMap) {
   if (!excludeMap || !Object.keys(excludeMap).length) return 0;
   let overlap = 0;
   (tpl.chunk_texts || []).forEach((text) => {
-    const row = index[String(text).toLowerCase().trim()];
-    if (row && excludeMap[row.chunk_id]) overlap += 1;
+    if (excludeMap[resolveChunkIdForText_(text, index)]) overlap += 1;
   });
   return overlap;
+}
+
+function isPassageBlockedForSession_(passage, excludePassageIds, excludeMap) {
+  if (!passage) return true;
+  const blockedPassage = {};
+  (excludePassageIds || []).forEach((id) => { if (id) blockedPassage[id] = true; });
+  if (blockedPassage[passage.passage_id]) return true;
+  const targets = passage.target_chunks || [];
+  for (let i = 0; i < targets.length; i++) {
+    if (excludeMap[targets[i].chunk_id]) return true;
+  }
+  return false;
+}
+
+function finalizePassageForRequest_(
+  passage, userId, band, index, progressMap, excludePassageIds, excludeChunkIds, now,
+) {
+  const excludeMap = buildTemplateExcludeMap_(
+    userId, excludeChunkIds, progressMap, now, band, index, excludePassageIds,
+  );
+  if (!isPassageBlockedForSession_(passage, excludePassageIds, excludeMap)) return passage;
+
+  Logger.log('Passage blocked for session (id=' + (passage && passage.passage_id) + '), repicking');
+  const retry = pickTemplatePassage_(band, index, progressMap, excludePassageIds, excludeMap);
+  if (!isPassageBlockedForSession_(retry, excludePassageIds, excludeMap)) return retry;
+  return null;
 }
 
 function filterTemplatesWithoutExcludedChunks_(templates, index, excludeMap) {
@@ -1182,43 +1213,50 @@ function buildPassageForUser_(userId, band, index, progressMap, excludePassageId
     exclude_chunk_ids: excludeChunkIds,
     exclude_passage_ids: excludePassageIds,
   });
-  const chunks = selectChunksForPassage_(dueData, progressMap, index, band, templateExcludeMap);
+  const chunks = selectChunksForPassage_(
+    dueData, progressMap, index, band, templateExcludeMap, excludePassageIds,
+  );
+  let passage = null;
 
   if (mode === 'template') {
-    const tpl = pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap);
-    if (tpl) return tpl;
-    return tryClaudePassageFallback_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds, chunks);
-  }
-
-  if (mode === 'hybrid') {
+    passage = pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap)
+      || tryClaudePassageFallback_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds, chunks);
+  } else if (mode === 'hybrid') {
     if (chunks.length >= 2) {
       const cacheKey = chunksCacheKey_(chunks);
-      const cached = findCachedPassage_(cacheKey, index, band, progressMap, excludePassageIds);
-      if (cached) return cached;
-
-      const tpl = pickTemplateCoveringChunks_(band, index, progressMap, excludePassageIds, chunks, templateExcludeMap);
-      if (tpl) return tpl;
+      passage = findCachedPassage_(cacheKey, index, band, progressMap, excludePassageIds)
+        || pickTemplateCoveringChunks_(band, index, progressMap, excludePassageIds, chunks, templateExcludeMap);
     }
 
-    if (needsNewPassageContext_(chunks, progressMap)) {
+    if (!passage && needsNewPassageContext_(chunks, progressMap)) {
       try {
-        return generateDynamicPassageClaude_(userId, band, index, progressMap, excludePassageIds, chunks, excludeChunkIds);
+        passage = generateDynamicPassageClaude_(
+          userId, band, index, progressMap, excludePassageIds, chunks, excludeChunkIds,
+        );
       } catch (err) {
         Logger.log('Hybrid Claude generation failed: ' + err);
       }
     }
 
-    return pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap)
-      || tryClaudePassageFallback_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds, chunks);
+    if (!passage) {
+      passage = pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap)
+        || tryClaudePassageFallback_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds, chunks);
+    }
+  } else {
+    try {
+      passage = generateDynamicPassage_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds);
+    } catch (err) {
+      Logger.log('Dynamic passage failed, using template: ' + err);
+    }
+    if (!passage) {
+      passage = pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap)
+        || tryClaudePassageFallback_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds, chunks);
+    }
   }
 
-  try {
-    return generateDynamicPassage_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds);
-  } catch (err) {
-    Logger.log('Dynamic passage failed, using template: ' + err);
-  }
-  return pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap)
-    || tryClaudePassageFallback_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds, chunks);
+  return finalizePassageForRequest_(
+    passage, userId, band, index, progressMap, excludePassageIds, excludeChunkIds, now,
+  );
 }
 
 function isDynamicPassagesEnabled_() {
@@ -1330,7 +1368,7 @@ function getRecentPassageIds_(userId, hours) {
   return Object.keys(ids);
 }
 
-function selectChunksForPassage_(dueData, progressMap, index, band, excludeMap) {
+function selectChunksForPassage_(dueData, progressMap, index, band, excludeMap, excludePassageIds) {
   const due = filterExcludedChunks_(dueData.due_chunks || [], excludeMap);
   const newChunks = filterExcludedChunks_(dueData.new_chunks || [], excludeMap);
   const selected = [];
@@ -1380,10 +1418,10 @@ function selectChunksForPassage_(dueData, progressMap, index, band, excludeMap) 
   }
   if (selected.length < 2) {
     const templates = getPassageTemplatesForBand_(band);
-    const tpl = pickTemplateFromPool_(templates, index, excludeMap, [], band);
+    const tpl = pickTemplateFromPool_(templates, index, excludeMap, excludePassageIds || [], band);
     if (tpl) {
       (tpl.chunk_texts || []).forEach((text) => {
-        add(index[text.toLowerCase().trim()] || fallbackChunk_(text, band));
+        add(index[String(text).toLowerCase().trim()] || fallbackChunk_(text, band));
       });
     }
   }

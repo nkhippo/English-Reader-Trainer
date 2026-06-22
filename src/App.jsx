@@ -23,6 +23,13 @@ function chunkTextsFromPassages(passages = []) {
   return passages.flatMap((p) => (p.chunks || []).map((c) => c.text).filter(Boolean));
 }
 
+function passageOverlapsSession(next, seenPassageIds, seenChunkIds) {
+  if (!next?.id) return true;
+  if (seenPassageIds.has(next.id)) return true;
+  const chunks = next.chunks || [];
+  return chunks.some((c) => c?.id && seenChunkIds.has(c.id));
+}
+
 function firstPassageFromResponse(res) {
   const normalized = normalizePassagesFromApi(res.passages || []);
   if (normalized.length > 0) return normalized[0];
@@ -34,6 +41,7 @@ export default function App() {
   const [cefrBand, setCefrBand] = useState(getStoredCefrBand);
   const [passages, setPassages] = useState([]);
   const passagesRef = useRef(passages);
+  const sessionChunkIdsRef = useRef(new Set());
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ reviewing: 0, graduated: 0, total: 0, encountered: 0 });
   const advancePastEndRef = useRef(async () => false);
@@ -52,6 +60,7 @@ export default function App() {
 
     async function loadContent(band) {
       setLoading(true);
+      sessionChunkIdsRef.current = new Set();
       try {
         const sessionRes = await fetchSession({ userId: USER_ID, cefr: band });
         if (cancelled) return;
@@ -78,7 +87,10 @@ export default function App() {
 
   useEffect(() => {
     passagesRef.current = passages;
+    chunkIdsFromPassages(passages).forEach((id) => sessionChunkIdsRef.current.add(id));
   }, [passages]);
+
+  const getSessionExcludeChunkIds = useCallback(() => [...sessionChunkIdsRef.current], []);
 
   const handleProgressUpdate = useCallback(async () => {
     await refreshStats(cefrBand);
@@ -88,6 +100,7 @@ export default function App() {
     cefrBand,
     seenPassageIds: passages.map((p) => p.id),
     seenPassages: passages,
+    getExcludeChunkIds: getSessionExcludeChunkIds,
     enabled: !loading && passages.length > 0,
   });
 
@@ -110,18 +123,26 @@ export default function App() {
       consumePrefetched,
       fillQueue,
       fetchRemote: async (seenIds) => {
-        const res = await fetchGeneratePassage({
-          userId: USER_ID,
-          cefr: cefrBand,
-          excludePassageIds: seenIds,
-          excludeChunkIds: chunkIdsFromPassages(passagesRef.current),
-        });
-        const normalized = normalizePassagesFromApi(res.passages || []);
-        const next = normalized[0] ?? null;
-        if (!next) return null;
-        const excludeChunks = new Set(chunkIdsFromPassages(passagesRef.current));
-        if ((next.chunks || []).some((c) => excludeChunks.has(c.id))) return null;
-        return next;
+        const seenPassageIds = new Set(seenIds);
+        const seenChunkIds = new Set(getSessionExcludeChunkIds());
+
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const res = await fetchGeneratePassage({
+            userId: USER_ID,
+            cefr: cefrBand,
+            excludePassageIds: [...seenPassageIds],
+            excludeChunkIds: [...seenChunkIds],
+          });
+          const normalized = normalizePassagesFromApi(res.passages || []);
+          const next = normalized[0] ?? null;
+          if (!next) return null;
+          if (passageOverlapsSession(next, seenPassageIds, seenChunkIds)) {
+            seenPassageIds.add(next.id);
+            continue;
+          }
+          return next;
+        }
+        return null;
       },
       pickLocal: (seenIds) => {
         const current = passagesRef.current;
@@ -134,7 +155,7 @@ export default function App() {
         );
       },
     });
-  }, [cefrBand, consumePrefetched, fillQueue, takeQueuedPassage]);
+  }, [cefrBand, consumePrefetched, fillQueue, getSessionExcludeChunkIds, takeQueuedPassage]);
 
   const handleCefrChange = (band) => {
     storeCefrBand(band);
