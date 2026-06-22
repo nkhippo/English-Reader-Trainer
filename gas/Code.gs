@@ -1564,11 +1564,13 @@ function buildPassageForUser_(userId, band, index, progressMap, excludePassageId
     if (chunks.length >= 2) {
       const cacheKey = chunksCacheKey_(chunks);
       passage = findCachedPassage_(cacheKey, index, band, progressMap, excludePassageIds)
-        || findCachedPassageContainingChunks_(chunks, index, band, progressMap, excludePassageIds)
-        || pickTemplateCoveringChunks_(band, index, progressMap, excludePassageIds, chunks, templateExcludeMap);
+        || findCachedPassageContainingChunks_(chunks, index, band, progressMap, excludePassageIds);
+      if (!passage && chunks.length <= 3) {
+        passage = pickTemplateCoveringChunks_(band, index, progressMap, excludePassageIds, chunks, templateExcludeMap);
+      }
     }
 
-    if (!passage && needsNewPassageContext_(chunks, progressMap)) {
+    if (!passage && (needsNewPassageContext_(chunks, progressMap) || chunks.length > 3)) {
       try {
         passage = generateDynamicPassageClaude_(
           userId, band, index, progressMap, excludePassageIds, chunks, excludeChunkIds,
@@ -1591,6 +1593,17 @@ function buildPassageForUser_(userId, band, index, progressMap, excludePassageId
     if (!passage) {
       passage = pickTemplatePassage_(band, index, progressMap, excludePassageIds, templateExcludeMap)
         || tryClaudePassageFallback_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds, chunks);
+    }
+  }
+
+  if (chunks.length >= 2 && passage) {
+    const aligned = alignPassageToSelectedChunks_(passage, chunks, index, band, progressMap);
+    if (aligned) {
+      passage = aligned;
+    } else if ((passage.target_chunks || []).length < chunks.length && mode !== 'template') {
+      Logger.log('Passage missing selected chunks (' + (passage.target_chunks || []).length + '/' + chunks.length + '), regenerating');
+      passage = tryClaudePassageFallback_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds, chunks)
+        || passage;
     }
   }
 
@@ -1631,6 +1644,16 @@ function pickTemplateCoveringChunks_(band, index, progressMap, excludePassageIds
   });
 
   if (!bestPool.length || bestScore === 0) return null;
+  bestPool = bestPool.filter((tpl) => {
+    const texts = tpl.chunk_texts || [];
+    if (texts.length < chunks.length) return false;
+    let score = 0;
+    texts.forEach((text) => {
+      if (chunkTexts[String(text).toLowerCase().trim()]) score += 1;
+    });
+    return score >= chunks.length;
+  });
+  if (!bestPool.length) return null;
   const best = pickTemplateFromPool_(bestPool, index, excludeMap, excludePassageIds, band);
   if (!best) return null;
   return enrichPassageTemplate_(best, index, band, progressMap);
@@ -2261,21 +2284,57 @@ function repairPassageTargetChunkSpans_(generated, chunks) {
   const text = String(generated.text);
   const byId = {};
   (chunks || []).forEach((c) => { if (c && c.chunk_id) byId[c.chunk_id] = c; });
-
+  const existingById = {};
   (generated.target_chunks || []).forEach((tc) => {
-    const row = byId[tc.chunk_id] || tc;
-    const expected = String(row.text || tc.text || '').trim();
+    if (tc && tc.chunk_id) existingById[tc.chunk_id] = tc;
+  });
+
+  const source = (chunks && chunks.length) ? chunks : (generated.target_chunks || []);
+  const repaired = [];
+
+  source.forEach((c) => {
+    const chunkId = c.chunk_id;
+    if (!chunkId) return;
+    const row = byId[chunkId] || c;
+    const expected = String(row.text || c.text || '').trim();
     if (!expected) return;
     const span = findChunkSpanInPassage_(text, expected);
     if (!span) return;
-    tc.text = span.matched;
-    tc.char_start = span.start;
-    tc.char_end = span.end;
+    const prev = existingById[chunkId] || {};
+    repaired.push({
+      chunk_id: chunkId,
+      text: span.matched,
+      char_start: span.start,
+      char_end: span.end,
+      cefr: prev.cefr || row.cefr,
+    });
   });
+
+  generated.target_chunks = repaired;
   return generated;
 }
 
-function describePassageQualityFailure_(generated) {
+function stripPassageMarkup_(markup) {
+  return String(markup || '').replace(/\{\{([^}]+)\}\}/g, '$1');
+}
+
+/** Filter/rebuild a passage so every selected chunk is marked in text_markup. */
+function alignPassageToSelectedChunks_(passage, selectedChunks, index, band, progressMap) {
+  if (!passage || !selectedChunks || !selectedChunks.length) return passage;
+  const plainText = String(passage.text || stripPassageMarkup_(passage.text_markup) || '').trim();
+  if (!plainText) return null;
+
+  const synthetic = { text: plainText, target_chunks: [] };
+  repairPassageTargetChunkSpans_(synthetic, selectedChunks);
+  if (synthetic.target_chunks.length < selectedChunks.length) return null;
+
+  const aligned = buildPassageOutput_(synthetic, selectedChunks, index, band, progressMap);
+  aligned.passage_id = passage.passage_id || aligned.passage_id;
+  aligned.ja_translation = passage.ja_translation || aligned.ja_translation;
+  return aligned;
+}
+
+function describePassageQualityFailure_(generated, chunks) {
   const reasons = [];
   const text = String(generated?.text || '').trim();
   const ja = String(generated?.ja_translation || '').trim();
@@ -2291,7 +2350,10 @@ function describePassageQualityFailure_(generated) {
   if (words.length > 160) reasons.push('too many words (' + words.length + ')');
 
   const targets = generated?.target_chunks || [];
-  if (targets.length < 2) reasons.push('target_chunks < 2');
+  const minTargets = chunks && chunks.length ? chunks.length : 2;
+  if (targets.length < minTargets) {
+    reasons.push('target_chunks < required (' + targets.length + '/' + minTargets + ')');
+  }
 
   targets.forEach((tc, i) => {
     const start = Number(tc.char_start);
@@ -2313,8 +2375,8 @@ function describePassageQualityFailure_(generated) {
   return reasons;
 }
 
-function validatePassageQuality_(generated) {
-  return describePassageQualityFailure_(generated).length === 0;
+function validatePassageQuality_(generated, chunks) {
+  return describePassageQualityFailure_(generated, chunks).length === 0;
 }
 
 function validateGeneratedPassageOrThrow_(generated, chunks) {
@@ -2322,7 +2384,7 @@ function validateGeneratedPassageOrThrow_(generated, chunks) {
   if (!validatePassageChunks_(generated.text, chunks)) {
     throw new Error('Generated passage missing target chunks');
   }
-  const reasons = describePassageQualityFailure_(generated);
+  const reasons = describePassageQualityFailure_(generated, chunks);
   if (reasons.length) {
     throw new Error('Generated passage failed quality checks: ' + reasons.join('; '));
   }
@@ -2330,7 +2392,7 @@ function validateGeneratedPassageOrThrow_(generated, chunks) {
 
 function logPassageGenerationFailure_(attempt, err, generated, chunks) {
   if (generated) repairPassageTargetChunkSpans_(generated, chunks);
-  const reasons = generated ? describePassageQualityFailure_(generated) : [];
+  const reasons = generated ? describePassageQualityFailure_(generated, chunks) : [];
   const msg = String(err && err.message || err);
   Logger.log('Passage attempt ' + (attempt + 1) + '/' + PASSAGE_GENERATION_MAX_ATTEMPTS + ' failed: ' + msg
     + (reasons.length ? ' | detail: ' + reasons.join('; ') : ''));
@@ -2375,13 +2437,16 @@ function makePassageId_(chunks) {
 }
 
 function buildPassageOutput_(generated, chunks, index, band, progressMap) {
-  const target_chunks = (generated.target_chunks || []).map((tc) => {
-    const row = index[String(tc.text).toLowerCase().trim()] || chunks.find((c) => c.chunk_id === tc.chunk_id) || tc;
-    const prog = progressMap[row.chunk_id || tc.chunk_id];
+  repairPassageTargetChunkSpans_(generated, chunks);
+  const target_chunks = chunks.map((c) => {
+    const tc = (generated.target_chunks || []).find((t) => t.chunk_id === c.chunk_id);
+    if (!tc) return null;
+    const row = index[String(c.text).toLowerCase().trim()] || c;
+    const prog = progressMap[c.chunk_id];
     return {
-      chunk_id: row.chunk_id || tc.chunk_id,
-      text: row.text || tc.text,
-      cefr: row.cefr || tc.cefr,
+      chunk_id: c.chunk_id,
+      text: tc.text || row.text || c.text,
+      cefr: row.cefr || tc.cefr || c.cefr,
       char_start: tc.char_start,
       char_end: tc.char_end,
       ja_translation: resolveChunkJa_(row.text, row.ja_translation),
@@ -2391,7 +2456,7 @@ function buildPassageOutput_(generated, chunks, index, band, progressMap) {
       srs_stage: prog ? prog.srs_stage : 0,
       status: prog ? prog.status : 'new',
     };
-  });
+  }).filter(Boolean);
 
   const textMarkup = buildTextMarkupFromPositions_(generated.text, target_chunks);
   return {

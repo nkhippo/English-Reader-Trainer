@@ -1,20 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../i18n/I18nProvider.jsx';
-
-function parsePassageText(text, chunks) {
-  const parts = text.split(/(\{\{[^}]+\}\})/);
-  return parts.map((part, i) => {
-    if (part.startsWith('{{') && part.endsWith('}}')) {
-      const chunkText = part.slice(2, -2);
-      const chunk = chunks.find((c) => c.text === chunkText);
-      if (chunk) {
-        return { type: 'chunk', key: `${chunk.id}-${i}`, chunk };
-      }
-      return { type: 'text', key: `text-${i}`, content: chunkText };
-    }
-    return { type: 'text', key: `text-${i}`, content: part };
-  });
-}
+import { parsePassageText } from '../lib/passageMarkup.js';
 
 export function PassageView({
   passage,
@@ -106,7 +92,7 @@ export function PassageView({
                   onChunkClick(seg.chunk.id);
                 }}
               >
-                {isCloze ? '___' : seg.chunk.text}
+                {isCloze ? '___' : (seg.displayText || seg.chunk.text)}
               </mark>
             );
           })}
@@ -116,4 +102,4 @@ export function PassageView({
   );
 }
 
-export { parsePassageText };
+export { parsePassageText } from '../lib/passageMarkup.js';

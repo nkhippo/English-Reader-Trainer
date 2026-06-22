@@ -103,15 +103,18 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     passagesKeyRef.current = key;
   }, [passages, resetReadingTimer]);
 
-  // Occasional cloze blank on one target chunk (pillar 5 — light recall)
+  // Occasional cloze blank on one previously encountered chunk only
   useEffect(() => {
     if (!passage?.chunks?.length) {
       setClozeChunkId(null);
       setClozeRevealed(false);
       return;
     }
-    if (Math.random() < CLOZE_PROBABILITY) {
-      const pick = passage.chunks[Math.floor(Math.random() * passage.chunks.length)];
+    const encountered = passage.chunks.filter(
+      (c) => (c.encounters ?? 0) > 0 || c.status !== 'new' || (c.stage ?? 0) > 0,
+    );
+    if (encountered.length && Math.random() < CLOZE_PROBABILITY) {
+      const pick = encountered[Math.floor(Math.random() * encountered.length)];
       setClozeChunkId(pick.id);
       setClozeRevealed(false);
     } else {

@@ -1,6 +1,7 @@
 import passageTemplates from '../../shared/passage-templates.json';
 import { resolveChunkEn, resolveChunkJa } from './chunkGlosses.js';
 import { makeChunkId } from './chunkId.js';
+import { ensureTextMarkup } from './passageMarkup.js';
 
 const CEFR_BY_BAND = {
   A1A2: 'A2',
@@ -46,7 +47,7 @@ export async function templateToPassage(tpl) {
   return {
     id: tpl.passage_id,
     cefr: tpl.cefr_band,
-    text: tpl.text_markup,
+    text: ensureTextMarkup(tpl.text_markup, chunks),
     ja: tpl.ja_translation || '',
     chunks,
   };
