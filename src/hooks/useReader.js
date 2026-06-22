@@ -9,7 +9,7 @@ const ACTION_LOCK_TIMEOUT_MS = 10000;
 /** Keep processing UI visible long enough to notice (avoids sub-frame flash). */
 const MIN_PROCESSING_MS = 400;
 
-export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePastEnd } = {}) {
+export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePastEnd, onBeforeAdvance } = {}) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [activeChunkId, setActiveChunkId] = useState(null);
   const [marginaliaOpen, setMarginaliaOpen] = useState(false);
@@ -271,11 +271,11 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   }, [canInteract]);
 
   const recordEncounter = useCallback(
-    (signal) => {
+    async (signal) => {
       if (!passage) return;
       const timeOnPageMs = isReadingStarted ? Date.now() - pageStartRef.current : 0;
       const chunkIds = passage.chunks.map((c) => c.id);
-      logEncounter({
+      await logEncounter({
         userId: USER_ID,
         chunkIds,
         passageId: passage.id,
@@ -286,7 +286,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       });
 
       if (onProgressUpdate && (signal === 'got_it' || signal === 'still_hard')) {
-        onProgressUpdate().catch((err) => {
+        await onProgressUpdate().catch((err) => {
           console.error('[ERT] progress refresh failed:', err);
         });
       }
@@ -318,7 +318,8 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       const gen = actionGenerationRef.current;
       stopTimer();
       resetMarginalia();
-      recordEncounter(signal);
+      await recordEncounter(signal);
+      onBeforeAdvance?.();
       try {
         let advanced = false;
         for (let attempt = 0; attempt < 2 && !advanced; attempt += 1) {
@@ -354,6 +355,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     [
       activateTimer,
       advanceToNextInternal,
+      onBeforeAdvance,
       recordEncounter,
       releaseActionLock,
       resetMarginalia,

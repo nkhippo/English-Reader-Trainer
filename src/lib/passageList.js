@@ -20,7 +20,7 @@ export function appendPassageSync(setPassages, passagesRef, next) {
   return newIndex;
 }
 
-async function tryTimedNetwork(promise, label, timeoutMs) {
+async function tryTimedNetwork(promise, label, timeoutMs = ADVANCE_GAS_TIMEOUT_MS + 500) {
   try {
     return await withTimeout(promise, timeoutMs, label);
   } catch (err) {
@@ -39,6 +39,7 @@ export async function acquireNextPassageIndex({
   takeQueuedPassage,
   consumePrefetched,
   pickLocal,
+  fetchRemote,
   fillQueue,
 }) {
   const seenIds = () => passagesRef.current.map((p) => p.id);
@@ -56,7 +57,7 @@ export async function acquireNextPassageIndex({
     if (idx >= 0) return idx;
   }
 
-  // 2. Brief wait for in-flight prefetch only — do not start a new slow GAS call on advance.
+  // 2. Brief wait for in-flight prefetch only.
   const prefetched = await tryTimedNetwork(
     consumePrefetched({ maxWaitMs: ADVANCE_GAS_TIMEOUT_MS }),
     'prefetch next passage',
@@ -67,7 +68,18 @@ export async function acquireNextPassageIndex({
     if (idx >= 0) return idx;
   }
 
-  // 3. Local templates — instant fallback; background prefetch continues for later pages.
+  // 3. Fresh GAS fetch after encounter is logged (excludes chunks from seen passages).
+  const remote = await tryTimedNetwork(
+    fetchRemote(seenIds()),
+    'remote next passage',
+    ADVANCE_GAS_TIMEOUT_MS + 500,
+  );
+  if (remote) {
+    const idx = tryAppend(remote);
+    if (idx >= 0) return idx;
+  }
+
+  // 4. Local templates — instant fallback when GAS is slow or unavailable.
   try {
     const local = await pickLocal(seenIds());
     if (local) {

@@ -805,16 +805,34 @@ function getRecentChunkIds_(userId, hours) {
   return Object.keys(ids);
 }
 
-function buildExcludeChunkMap_(userId, clientIds) {
+function chunkIdsForPassageTemplates_(passageIds, band, index) {
+  const exclude = {};
+  if (!passageIds || !passageIds.length || !band || !index) return exclude;
+  const templates = getPassageTemplatesForBand_(band);
+  const byId = {};
+  templates.forEach((tpl) => { byId[tpl.passage_id] = tpl; });
+  passageIds.forEach((passageId) => {
+    const tpl = byId[passageId];
+    if (!tpl) return;
+    (tpl.chunk_texts || []).forEach((text) => {
+      const row = index[String(text).toLowerCase().trim()];
+      if (row && row.chunk_id) exclude[row.chunk_id] = true;
+    });
+  });
+  return exclude;
+}
+
+function buildExcludeChunkMap_(userId, clientIds, band, index, excludePassageIds) {
   const exclude = {};
   getRecentChunkIds_(userId, RECENT_CHUNK_HOURS).forEach((id) => { exclude[id] = true; });
   (clientIds || []).forEach((id) => { if (id) exclude[id] = true; });
+  Object.assign(exclude, chunkIdsForPassageTemplates_(excludePassageIds, band, index));
   return exclude;
 }
 
 /** For template scoring: also treat not-yet-due progress chunks as excluded. */
-function buildTemplateExcludeMap_(userId, clientIds, progressMap, now) {
-  const exclude = buildExcludeChunkMap_(userId, clientIds);
+function buildTemplateExcludeMap_(userId, clientIds, progressMap, now, band, index, excludePassageIds) {
+  const exclude = buildExcludeChunkMap_(userId, clientIds, band, index, excludePassageIds);
   Object.keys(progressMap || {}).forEach((chunkId) => {
     const prog = progressMap[chunkId];
     if (prog && !isDue_(prog.next_due_at, now)) exclude[chunkId] = true;
@@ -1023,7 +1041,10 @@ function handleDueChunks_(body) {
   const now = new Date();
   const index = loadChunksIndex_();
   const progressMap = loadUserProgressMap_(userId);
-  const excludeMap = buildExcludeChunkMap_(userId, body.exclude_chunk_ids);
+  const excludePassageIds = mergeExcludePassageIds_(userId, body.exclude_passage_ids);
+  const excludeMap = buildExcludeChunkMap_(
+    userId, body.exclude_chunk_ids, band, index, excludePassageIds,
+  );
 
   const due = [];
   const newChunks = [];
@@ -1149,7 +1170,9 @@ function getPassageMode_() {
 
 function buildPassageForUser_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds) {
   const now = new Date();
-  const templateExcludeMap = buildTemplateExcludeMap_(userId, excludeChunkIds, progressMap, now);
+  const templateExcludeMap = buildTemplateExcludeMap_(
+    userId, excludeChunkIds, progressMap, now, band, index, excludePassageIds,
+  );
   const mode = getPassageMode_();
 
   const dueData = handleDueChunks_({
@@ -1157,6 +1180,7 @@ function buildPassageForUser_(userId, band, index, progressMap, excludePassageId
     cefr: band,
     limit: 20,
     exclude_chunk_ids: excludeChunkIds,
+    exclude_passage_ids: excludePassageIds,
   });
   const chunks = selectChunksForPassage_(dueData, progressMap, index, band, templateExcludeMap);
 
@@ -1247,10 +1271,18 @@ function needsNewPassageContext_(chunks, progressMap) {
 function generateDynamicPassageClaude_(userId, band, index, progressMap, excludePassageIds, chunks, excludeChunkIds) {
   const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
-  const excludeMap = buildTemplateExcludeMap_(userId, excludeChunkIds, progressMap, new Date());
+  const excludeMap = buildTemplateExcludeMap_(
+    userId, excludeChunkIds, progressMap, new Date(), band, index, excludePassageIds,
+  );
   if (!chunks || chunks.length < 2) {
     chunks = selectChunksForPassage_(
-      handleDueChunks_({ user_id: userId, cefr: band, limit: 20, exclude_chunk_ids: excludeChunkIds }),
+      handleDueChunks_({
+        user_id: userId,
+        cefr: band,
+        limit: 20,
+        exclude_chunk_ids: excludeChunkIds,
+        exclude_passage_ids: excludePassageIds,
+      }),
       progressMap,
       index,
       band,
@@ -1403,13 +1435,16 @@ function findCachedPassage_(chunkKey, index, band, progressMap, excludePassageId
 function generateDynamicPassage_(userId, band, index, progressMap, excludePassageIds, excludeChunkIds) {
   const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set');
-  const excludeMap = buildTemplateExcludeMap_(userId, excludeChunkIds, progressMap, new Date());
+  const excludeMap = buildTemplateExcludeMap_(
+    userId, excludeChunkIds, progressMap, new Date(), band, index, excludePassageIds,
+  );
 
   const dueData = handleDueChunks_({
     user_id: userId,
     cefr: band,
     limit: 20,
     exclude_chunk_ids: excludeChunkIds,
+    exclude_passage_ids: excludePassageIds,
   });
   const chunks = selectChunksForPassage_(dueData, progressMap, index, band, excludeMap);
   if (chunks.length < 2) throw new Error('Not enough chunks to generate passage');

@@ -9,11 +9,12 @@ import { TranslationOverlay } from './components/TranslationOverlay.jsx';
 import { ProcessingOverlay } from './components/ProcessingOverlay.jsx';
 import { ReadingTimerBar } from './components/ReadingTimerBar.jsx';
 import { StartReadingOverlay } from './components/StartReadingOverlay.jsx';
-import { fetchSession, fetchStats } from './lib/api.js';
+import { fetchSession, fetchStats, fetchGeneratePassage } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
 import { pickUnseenBandTemplate } from './lib/localPassages.js';
 import { acquireNextPassageIndex } from './lib/passageList.js';
+import { chunkIdsFromPassages } from './lib/chunkIds.js';
 import { normalizeBandStats } from './lib/stats.js';
 import { USER_ID } from './lib/config.js';
 import { useI18n } from './i18n/I18nProvider.jsx';
@@ -83,17 +84,22 @@ export default function App() {
     await refreshStats(cefrBand);
   }, [cefrBand, refreshStats]);
 
-  const reader = useReader(passages, {
-    passagesRef,
-    onProgressUpdate: handleProgressUpdate,
-    onAdvancePastEnd: () => advancePastEndRef.current(),
-  });
-
-  const { consumePrefetched, takeQueuedPassage, fillQueue } = usePassagePrefetch({
+  const { consumePrefetched, takeQueuedPassage, fillQueue, clearPrefetch } = usePassagePrefetch({
     cefrBand,
     seenPassageIds: passages.map((p) => p.id),
     seenPassages: passages,
     enabled: !loading && passages.length > 0,
+  });
+
+  const onBeforeAdvance = useCallback(() => {
+    clearPrefetch();
+  }, [clearPrefetch]);
+
+  const reader = useReader(passages, {
+    passagesRef,
+    onProgressUpdate: handleProgressUpdate,
+    onAdvancePastEnd: () => advancePastEndRef.current(),
+    onBeforeAdvance,
   });
 
   useEffect(() => {
@@ -103,6 +109,20 @@ export default function App() {
       takeQueuedPassage,
       consumePrefetched,
       fillQueue,
+      fetchRemote: async (seenIds) => {
+        const res = await fetchGeneratePassage({
+          userId: USER_ID,
+          cefr: cefrBand,
+          excludePassageIds: seenIds,
+          excludeChunkIds: chunkIdsFromPassages(passagesRef.current),
+        });
+        const normalized = normalizePassagesFromApi(res.passages || []);
+        const next = normalized[0] ?? null;
+        if (!next) return null;
+        const excludeChunks = new Set(chunkIdsFromPassages(passagesRef.current));
+        if ((next.chunks || []).some((c) => excludeChunks.has(c.id))) return null;
+        return next;
+      },
       pickLocal: (seenIds) => {
         const current = passagesRef.current;
         const lastId = current.length ? current[current.length - 1].id : null;
