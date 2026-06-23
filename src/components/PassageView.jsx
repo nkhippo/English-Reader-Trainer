@@ -1,5 +1,6 @@
 import { useI18n } from '../i18n/I18nProvider.jsx';
 import { parsePassageText } from '../lib/passageMarkup.js';
+import { formatChunkPassageText } from '../lib/chunkDisplay.js';
 import { PassageGlossPane } from './PassageGlossPane.jsx';
 
 export function PassageView({
@@ -12,6 +13,7 @@ export function PassageView({
   transitionDirection,
   canInteract,
   showInteractionHint,
+  displayMode,
   onChunkTap,
   onEvaluate,
   onBackgroundClick,
@@ -62,7 +64,13 @@ export function PassageView({
                   onChunkTap(seg.chunk.id);
                 }}
               >
-                {isCloze ? '___' : (seg.displayText || seg.chunk.text)}
+                {isCloze
+                  ? '___'
+                  : formatChunkPassageText(
+                    seg.chunk,
+                    displayMode,
+                    seg.displayText || seg.chunk.text,
+                  )}
               </mark>
             );
           })}

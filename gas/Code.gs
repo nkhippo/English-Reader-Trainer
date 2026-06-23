@@ -14,6 +14,8 @@
  *   4. enrichAllTranslations() — runs until remaining = 0
  *   5. migrateChunksAddEnTranslationColumn() — once on existing spreadsheets
  *   6. enrichAllEnglishGlosses() — runs until remaining = 0
+ *   6b. migrateChunksAddIpaColumn() — once on existing spreadsheets
+ *   6c. enrichAllIpa() — runs until remaining = 0
  *   7. generateTemplateBatch_(band, count) — optional template samples for review
  *   8. setupNightlyWarmupTrigger() — once, schedules nightly passage warmup
  *   9. reportTokenUsage() — purpose/model token summary from token_usage sheet
@@ -33,7 +35,7 @@ const SHEET_NAMES = {
 const SHEET_HEADERS = {
   [SHEET_NAMES.CHUNKS]: [
     'chunk_id', 'text', 'type', 'cefr', 'pos', 'ja_translation', 'en_translation',
-    'example_sentence', 'audio_drive_url', 'created_at', 'enrich_version',
+    'example_sentence', 'ipa', 'audio_drive_url', 'created_at', 'enrich_version',
   ],
   [SHEET_NAMES.PROGRESS]: [
     'user_id', 'chunk_id', 'encounter_count', 'distinct_passages_count',
@@ -77,6 +79,7 @@ const ENRICH_SAFETY_CONTINUE_MS = 6.5 * 60 * 1000;
 const ENRICH_CONTINUE_DELAY_MS = 30 * 1000;
 const ENRICH_CONTINUE_HANDLER = 'enrichAllTranslationsContinue_';
 const ENRICH_EN_CONTINUE_HANDLER = 'enrichAllEnglishGlossesContinue_';
+const ENRICH_IPA_CONTINUE_HANDLER = 'enrichAllIpaContinue_';
 /** Bump when ja/en enrich prompts change — only stale rows are re-enriched. */
 const ENRICH_PROMPT_VERSION = 1;
 const WARMUP_NIGHTLY_HANDLER = 'runNightlyWarmup_';
@@ -822,6 +825,44 @@ function callClaudeEnrichEnglish_(items, apiKey) {
   return fetchEnrichBatchResults_(items, apiKey, buildEnEnrichPayload_, 'enrich_en');
 }
 
+function buildIpaEnrichPayload_(batch) {
+  const input = batch.map((i) => ({
+    chunk_id: i.chunk_id,
+    text: i.text,
+    type: i.type || null,
+    cefr: i.cefr || null,
+  }));
+
+  return {
+    model: MODEL_ENRICH,
+    max_tokens: ENRICH_EN_MAX_TOKENS,
+    messages: [{
+      role: 'user',
+      content: `You are a phonetician providing IPA transcriptions for a chunk-learning app.
+For each item, provide the IPA pronunciation of the WHOLE chunk in General American (GA) English.
+
+Rules:
+1. Transcribe the chunk AS A CONNECTED UNIT, not word by word. Reflect natural connected speech:
+   - linking, assimilation, elision, and weak forms.
+   - e.g. "a few" → "ə fjuː" (weak "a", not "eɪ"); "sit down" → "sɪt daʊn".
+2. Use General American (GA). E.g. use "ɚ"/"ər" for r-colored vowels, "t̬" or "t" for flapped t is optional—prefer the simplest standard symbols a learner can read.
+3. Give ONE representative pronunciation (the most frequent citation form of the chunk). Do not list variants.
+4. Use only standard IPA symbols common in learner dictionaries. Avoid narrow/diacritic-heavy notation.
+5. Do NOT include slashes or brackets; output the bare symbol string.
+
+Return ONLY a JSON array, no markdown:
+[{"chunk_id":"...","ipa":"..."}]
+
+Items:
+${JSON.stringify(input)}`,
+    }],
+  };
+}
+
+function callClaudeEnrichIpa_(items, apiKey) {
+  return fetchEnrichBatchResults_(items, apiKey, buildIpaEnrichPayload_, 'enrich_ipa');
+}
+
 function ensureChunksEnrichVersionColumn_() {
   const sheet = getSheet_(SHEET_NAMES.CHUNKS);
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
@@ -959,6 +1000,144 @@ function auditEnglishGlossCoverage() {
   };
   Logger.log(JSON.stringify(result));
   return result;
+}
+
+// ===== Phase 2c: chunks_master ipa enrichment =====
+
+/** Add ipa column to an existing chunks_master sheet (safe to run multiple times). */
+function migrateChunksAddIpaColumn() {
+  ensureChunksIpaColumn_();
+  return { ok: true };
+}
+
+function ensureChunksIpaColumn_() {
+  const sheet = getSheet_(SHEET_NAMES.CHUNKS);
+  if (sheet.getLastRow() < 1) return false;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (headers.indexOf('ipa') >= 0) return true;
+  const exIdx = headers.indexOf('example_sentence');
+  if (exIdx < 0) throw new Error('chunks_master: example_sentence column not found');
+  sheet.insertColumnAfter(exIdx + 1);
+  sheet.getRange(1, exIdx + 2).setValue('ipa');
+  Logger.log('Added ipa column to chunks_master.');
+  return true;
+}
+
+function rowNeedsIpaEnrich_(row, col) {
+  if (col.ipa === undefined) return true;
+  return !String(row[col.ipa] || '').trim();
+}
+
+function countMissingIpa_() {
+  ensureChunksIpaColumn_();
+  const sheet = getSheet_(SHEET_NAMES.CHUNKS);
+  const data = sheet.getDataRange().getValues();
+  if (data.length < 2) return 0;
+  const col = indexColumns_(data[0]);
+  let count = 0;
+  for (let r = 1; r < data.length; r++) {
+    if (rowNeedsIpaEnrich_(data[r], col)) count += 1;
+  }
+  return count;
+}
+
+/** Process up to ENRICH_BATCH_SIZE rows missing ipa. */
+function enrichIpaBatch() {
+  return enrichIpaBatch_(ENRICH_BATCH_SIZE);
+}
+
+/** Enrich all rows until ipa remaining = 0 (auto-continues via trigger). */
+function enrichAllIpa() {
+  clearEnrichIpaContinueTriggers_();
+  return enrichAllIpaRun_();
+}
+
+/** Trigger handler — do not run manually. */
+function enrichAllIpaContinue_() {
+  return enrichAllIpaRun_();
+}
+
+function stopEnrichAllIpa() {
+  clearEnrichIpaContinueTriggers_();
+  const coverage = auditIpaCoverage();
+  Logger.log('IPA enrichment continuation stopped.');
+  return { stopped: true, coverage };
+}
+
+function enrichAllIpaRun_() {
+  return runEnrichJob_({
+    logLabel: 'enrichAllIpa',
+    continueHandler: ENRICH_IPA_CONTINUE_HANDLER,
+    clearTriggersFn: clearEnrichIpaContinueTriggers_,
+    scheduleContinueFn: scheduleEnrichIpaContinue_,
+    runBatchFn: () => enrichIpaBatch_(ENRICH_BATCH_SIZE),
+    countRemainingFn: countMissingIpa_,
+  });
+}
+
+function scheduleEnrichIpaContinue_() {
+  scheduleEnrichDelayedContinue_(ENRICH_IPA_CONTINUE_HANDLER, ENRICH_CONTINUE_DELAY_MS);
+}
+
+function clearEnrichIpaContinueTriggers_() {
+  clearEnrichTriggersForHandler_(ENRICH_IPA_CONTINUE_HANDLER);
+}
+
+/** Manual: report ipa coverage on chunks_master. */
+function auditIpaCoverage() {
+  ensureChunksIpaColumn_();
+  const sheet = getSheet_(SHEET_NAMES.CHUNKS);
+  const total = Math.max(0, sheet.getLastRow() - 1);
+  const remaining = countMissingIpa_();
+  const result = {
+    total,
+    covered: total - remaining,
+    remaining,
+    percent: total ? Math.round(((total - remaining) / total) * 100) : 100,
+  };
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+function enrichIpaBatch_(batchSize) {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set in Script Properties');
+
+  ensureChunksIpaColumn_();
+  const sheet = getSheet_(SHEET_NAMES.CHUNKS);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const col = indexColumns_(headers);
+  const pending = [];
+
+  for (let r = 1; r < data.length && pending.length < batchSize; r++) {
+    if (!rowNeedsIpaEnrich_(data[r], col)) continue;
+    pending.push({
+      row: r + 1,
+      chunk_id: data[r][col.chunk_id],
+      text: data[r][col.text],
+      type: data[r][col.type],
+      cefr: data[r][col.cefr],
+    });
+  }
+
+  if (pending.length === 0) {
+    return { processed: 0, remaining: 0, done: true };
+  }
+
+  const enriched = callClaudeEnrichIpa_(pending, apiKey);
+  enriched.forEach((item) => {
+    const row = pending.find((p) => p.chunk_id === item.chunk_id);
+    if (!row || !item.ipa) return;
+    sheet.getRange(row.row, col.ipa + 1).setValue(String(item.ipa).trim());
+  });
+
+  const remaining = countMissingIpa_();
+  return {
+    processed: enriched.length,
+    remaining,
+    done: remaining === 0,
+  };
 }
 
 function enrichEnglishGlossesBatch_(batchSize) {
@@ -2452,6 +2631,7 @@ function buildPassageOutput_(generated, chunks, index, band, progressMap) {
       ja_translation: resolveChunkJa_(row.text, row.ja_translation),
       en_translation: resolveChunkEn_(row.text, row.en_translation),
       example_sentence: row.example_sentence || '',
+      ipa: row.ipa || '',
       encounters: prog ? prog.encounter_count : 0,
       srs_stage: prog ? prog.srs_stage : 0,
       status: prog ? prog.status : 'new',
@@ -2480,6 +2660,7 @@ function hydratePassageFromJson_(json, index, band, progressMap) {
       ja_translation: resolveChunkJa_(row.text, row.ja_translation),
       en_translation: resolveChunkEn_(row.text, row.en_translation),
       example_sentence: row.example_sentence || '',
+      ipa: row.ipa || '',
       encounters: prog ? prog.encounter_count : 0,
       srs_stage: prog ? prog.srs_stage : 0,
       status: prog ? prog.status : 'new',
@@ -3058,6 +3239,7 @@ function enrichPassageTemplate_(tpl, index, band, progressMap) {
       ja_translation: resolveChunkJa_(row.text, row.ja_translation),
       en_translation: resolveChunkEn_(row.text, row.en_translation),
       example_sentence: row.example_sentence || '',
+      ipa: row.ipa || '',
       encounters: prog ? prog.encounter_count : 0,
       srs_stage: prog ? prog.srs_stage : 0,
       status: prog ? prog.status : 'new',
@@ -3080,6 +3262,7 @@ function fallbackChunk_(text, band) {
     ja_translation: '',
     en_translation: '',
     example_sentence: '',
+    ipa: '',
   };
 }
 
@@ -3104,6 +3287,7 @@ function loadChunksIndex_() {
   if (sheet.getLastRow() < 2) return {};
 
   ensureChunksEnTranslationColumn_();
+  ensureChunksIpaColumn_();
   const data = sheet.getDataRange().getValues();
   const headers = data[0];
   const col = indexColumns_(headers);
@@ -3119,6 +3303,7 @@ function loadChunksIndex_() {
       ja_translation: data[r][col.ja_translation],
       en_translation: col.en_translation !== undefined ? data[r][col.en_translation] : '',
       example_sentence: data[r][col.example_sentence],
+      ipa: col.ipa !== undefined ? data[r][col.ipa] : '',
     };
   }
 

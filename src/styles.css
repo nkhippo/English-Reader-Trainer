@@ -491,6 +491,35 @@ html[lang='ja'] .reader-menu__section-label {
   color: var(--color-ink);
 }
 
+.display-mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--color-rule);
+  border-radius: 100px;
+  overflow: hidden;
+}
+
+.display-mode-switch__btn {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.display-mode-switch__btn--active {
+  background: var(--color-ink);
+  color: var(--color-page);
+}
+
+.display-mode-switch__btn:not(.display-mode-switch__btn--active):hover {
+  color: var(--color-ink);
+}
+
 .stat__num {
   font-weight: 600;
   color: var(--color-ink);
@@ -681,6 +710,14 @@ html[lang='ja'] .note__meta {
   font-weight: 500;
   margin: 0 0 8px;
   letter-spacing: -0.005em;
+}
+
+.chunk-gloss__ipa {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  color: var(--color-marginalia);
+  margin: 0 0 8px;
+  letter-spacing: 0.02em;
 }
 
 .chunk-gloss__meaning {

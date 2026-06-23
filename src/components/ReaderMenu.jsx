@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { CefrPicker } from './CefrPicker.jsx';
 import { CombinedProgress } from './CombinedProgress.jsx';
+import { DisplayModeSwitch } from './DisplayModeSwitch.jsx';
 import { useI18n } from '../i18n/I18nProvider.jsx';
 
 export function ReaderMenu({
@@ -12,6 +13,8 @@ export function ReaderMenu({
   graduated,
   total,
   encountered,
+  displayMode,
+  onDisplayModeChange,
 }) {
   const { locale, setLocale, t } = useI18n();
   const panelRef = useRef(null);
@@ -41,6 +44,11 @@ export function ReaderMenu({
         <section className="reader-menu__section">
           <h3 className="reader-menu__section-label">{t.cefrGroupAria}</h3>
           <CefrPicker band={cefrBand} onChange={onCefrChange} />
+        </section>
+
+        <section className="reader-menu__section">
+          <h3 className="reader-menu__section-label">{t.displayModeAria}</h3>
+          <DisplayModeSwitch mode={displayMode} onChange={onDisplayModeChange} />
         </section>
 
         <section className="reader-menu__section">

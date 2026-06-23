@@ -17,6 +17,7 @@ import { acquireNextPassageIndex } from './lib/passageList.js';
 import { chunkIdsFromPassages } from './lib/chunkIds.js';
 import { normalizeBandStats } from './lib/stats.js';
 import { USER_ID } from './lib/config.js';
+import { getStoredDisplayMode, storeDisplayMode } from './lib/displayMode.js';
 import { useI18n } from './i18n/I18nProvider.jsx';
 
 function chunkTextsFromPassages(passages = []) {
@@ -39,6 +40,7 @@ function firstPassageFromResponse(res) {
 export default function App() {
   const { t } = useI18n();
   const [cefrBand, setCefrBand] = useState(getStoredCefrBand);
+  const [displayMode, setDisplayMode] = useState(getStoredDisplayMode);
   const [passages, setPassages] = useState([]);
   const passagesRef = useRef(passages);
   const sessionChunkIdsRef = useRef(new Set());
@@ -158,6 +160,11 @@ export default function App() {
     setCefrBand(band);
   };
 
+  const handleDisplayModeChange = (mode) => {
+    storeDisplayMode(mode);
+    setDisplayMode(mode);
+  };
+
   const isReadingUi = reader.isReadingStarted && !reader.awaitingStart && !reader.isPaused;
   const canInteract = isReadingUi && !reader.actionsDisabled && !reader.isSaving;
 
@@ -185,6 +192,8 @@ export default function App() {
         encountered={stats.encountered}
         remainingSeconds={reader.remainingSeconds}
         showTimer={isReadingUi}
+        displayMode={displayMode}
+        onDisplayModeChange={handleDisplayModeChange}
       />
 
       <main className="reader">
@@ -204,6 +213,7 @@ export default function App() {
           transitionDirection={reader.transitionDirection}
           canInteract={canInteract}
           showInteractionHint={showInteractionHint && isReadingUi}
+          displayMode={displayMode}
           onChunkTap={reader.focusChunk}
           onEvaluate={(chunkId, signal) => {
             void reader.evaluateChunk(chunkId, signal);

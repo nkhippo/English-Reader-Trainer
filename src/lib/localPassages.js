@@ -36,6 +36,7 @@ export async function templateToPassage(tpl) {
       text,
       ja: resolveChunkJa(text, ''),
       en: resolveChunkEn(text, ''),
+      ipa: '',
       cefr: defaultCefr,
       encounters: 0,
       stage: 0,

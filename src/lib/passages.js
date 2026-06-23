@@ -9,6 +9,7 @@ export function normalizePassagesFromApi(apiPassages = []) {
       text: c.text,
       ja: resolveChunkJa(c.text, c.ja_translation || c.ja),
       en: resolveChunkEn(c.text, c.en_translation || c.en),
+      ipa: String(c.ipa || '').trim(),
       cefr: c.cefr,
       encounters: c.encounters ?? 0,
       stage: c.srs_stage ?? c.stage ?? 0,

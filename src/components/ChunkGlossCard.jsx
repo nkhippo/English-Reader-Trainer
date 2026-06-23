@@ -1,5 +1,6 @@
 import { useI18n } from '../i18n/I18nProvider.jsx';
 import { resolveChunkGloss } from '../lib/chunkGlosses.js';
+import { formatChunkIpaDisplay } from '../lib/chunkDisplay.js';
 
 export function ChunkGlossCard({
   chunk,
@@ -26,11 +27,13 @@ export function ChunkGlossCard({
   }
 
   const gloss = resolveChunkGloss(chunk.text, chunk, locale);
+  const ipaLine = formatChunkIpaDisplay(chunk.ipa);
   const evaluated = evaluation === 'got_it' || evaluation === 'still_hard';
 
   return (
     <article className="chunk-gloss">
       <h3 className="chunk-gloss__headline">{chunk.text}</h3>
+      {ipaLine ? <p className="chunk-gloss__ipa">{ipaLine}</p> : null}
       {gloss ? <p className="chunk-gloss__meaning">{gloss}</p> : null}
       {chunk.example ? (
         <p className="chunk-gloss__example">

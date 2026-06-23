@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CefrPicker } from './CefrPicker.jsx';
 import { CombinedProgress } from './CombinedProgress.jsx';
+import { DisplayModeSwitch } from './DisplayModeSwitch.jsx';
 import { ReaderMenu } from './ReaderMenu.jsx';
 import { useI18n } from '../i18n/I18nProvider.jsx';
 import { bandLabel } from '../lib/cefr.js';
@@ -15,6 +16,8 @@ export function Header({
   encountered = 0,
   remainingSeconds,
   showTimer = false,
+  displayMode,
+  onDisplayModeChange,
 }) {
   const { locale, setLocale, t } = useI18n();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -53,6 +56,8 @@ export function Header({
           graduated={graduated}
           total={total}
           encountered={encountered}
+          displayMode={displayMode}
+          onDisplayModeChange={onDisplayModeChange}
         />
       </>
     );
@@ -71,6 +76,7 @@ export function Header({
               <span className="stat__num">{graduated}</span> {t.graduated}
             </span>
           </div>
+          <DisplayModeSwitch mode={displayMode} onChange={onDisplayModeChange} />
           <div className="lang-switch" role="group" aria-label={t.langGroupAria}>
             <button
               type="button"
