@@ -7,7 +7,7 @@
 
 | Resource | URL / ID |
 |----------|----------|
-| GAS Web App | `https://script.google.com/macros/s/AKfycbzDOjr095omAU6iW-RGP00TPwLu_zfJ4Nvi07-n9hWfyf2Idi9x_cD9sbe7LyAbnzR5/exec` |
+| GAS Web App | `https://script.google.com/macros/s/AKfycbykjMC8q0FQ5gipKeQ-4H6bjzPEXMPKMVeNLWr03PzLg1cLWXdxT-A-oTxLXA8eFaVz/exec` |
 | Spreadsheet | [English Reader Trainer](https://docs.google.com/spreadsheets/d/1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw/edit) — ID: `1708RNGs-IbGAPvgxAlmc2_u9QEy_Ffaajrm0ka7mhIw` |
 | Drive root | [EnglishReaderTrainer](https://drive.google.com/drive/folders/1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI) — ID: `1fo9A48ddmjeHk0aSm6ymG_HWPmnCOYsI` |
 | GitHub Pages | https://nkhippo.github.io/English-Reader-Trainer/ |

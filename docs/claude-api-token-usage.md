@@ -4,7 +4,7 @@
 > **目的:** トークン消費の事実整理・対策経緯・現状を Claude レビュー用に記述  
 > **ソース:** `gas/Code.gs`, `token_usage` シート, Anthropic コンソール
 
-**GAS Web App:** `https://script.google.com/macros/s/AKfycbzDOjr095omAU6iW-RGP00TPwLu_zfJ4Nvi07-n9hWfyf2Idi9x_cD9sbe7LyAbnzR5/exec`
+**GAS Web App:** `https://script.google.com/macros/s/AKfycbykjMC8q0FQ5gipKeQ-4H6bjzPEXMPKMVeNLWr03PzLg1cLWXdxT-A-oTxLXA8eFaVz/exec`
 
 ---
 
