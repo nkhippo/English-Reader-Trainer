@@ -3,15 +3,14 @@ import { useReader } from './hooks/useReader.js';
 import { usePassagePrefetch } from './hooks/usePassagePrefetch.js';
 import { Header } from './components/Header.jsx';
 import { PassageView } from './components/PassageView.jsx';
-import { ReaderHintPanel } from './components/ReaderHintPanel.jsx';
-import { ChunkDetailModal } from './components/ChunkDetailModal.jsx';
+import { MarginaliaPanel } from './components/MarginaliaPanel.jsx';
 import { Footer } from './components/Footer.jsx';
 import { TranslationOverlay } from './components/TranslationOverlay.jsx';
 import { ProcessingOverlay } from './components/ProcessingOverlay.jsx';
-import { ReadingTimerBar } from './components/ReadingTimerBar.jsx';
 import { StartReadingOverlay } from './components/StartReadingOverlay.jsx';
 import { fetchSession, fetchStats, fetchGeneratePassage } from './lib/api.js';
 import { getStoredCefrBand, storeCefrBand } from './lib/cefr.js';
+import { hasSeenChunkHint } from './lib/hintStorage.js';
 import { normalizePassagesFromApi } from './lib/passages.js';
 import { pickUnseenBandTemplate } from './lib/localPassages.js';
 import { acquireNextPassageIndex } from './lib/passageList.js';
@@ -45,6 +44,7 @@ export default function App() {
   const sessionChunkIdsRef = useRef(new Set());
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ reviewing: 0, graduated: 0, total: 0, encountered: 0 });
+  const [showInteractionHint, setShowInteractionHint] = useState(() => !hasSeenChunkHint());
   const advancePastEndRef = useRef(async () => false);
 
   const refreshStats = useCallback(async (band) => {
@@ -158,6 +158,13 @@ export default function App() {
     setCefrBand(band);
   };
 
+  const isReadingUi = reader.isReadingStarted && !reader.awaitingStart && !reader.isPaused;
+  const canInteract = isReadingUi && !reader.actionsDisabled && !reader.isSaving;
+
+  useEffect(() => {
+    if (hasSeenChunkHint()) setShowInteractionHint(false);
+  }, [reader.focusedChunkId]);
+
   if (loading && passages.length === 0) {
     return (
       <div className="app app--loading">
@@ -167,17 +174,18 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app ${isReadingUi ? 'app--reading' : ''}`}>
       <Header
+        compact={isReadingUi}
         cefrBand={cefrBand}
         onCefrChange={handleCefrChange}
         reviewing={stats.reviewing}
         graduated={stats.graduated}
         total={stats.total}
         encountered={stats.encountered}
+        remainingSeconds={reader.remainingSeconds}
+        showTimer={isReadingUi}
       />
-
-      <ReadingTimerBar visible={reader.isReadingStarted} remainingSeconds={reader.remainingSeconds} />
 
       <main className="reader">
         <StartReadingOverlay
@@ -188,25 +196,31 @@ export default function App() {
         />
         <PassageView
           passage={reader.passage}
+          focusedChunkId={reader.focusedChunkId}
           chunkEvaluations={reader.chunkEvaluations}
           clozeChunkId={reader.clozeChunkId}
           clozeRevealed={reader.clozeRevealed}
           isTransitioning={reader.isTransitioning}
           transitionDirection={reader.transitionDirection}
-          canInteract={
-            reader.isReadingStarted
-            && !reader.awaitingStart
-            && !reader.isPaused
-            && !reader.actionsDisabled
-            && !reader.isSaving
-          }
-          onChunkTap={(chunkId) => {
-            void reader.cycleChunkEvaluation(chunkId);
+          canInteract={canInteract}
+          showInteractionHint={showInteractionHint && isReadingUi}
+          onChunkTap={reader.focusChunk}
+          onEvaluate={(chunkId, signal) => {
+            void reader.evaluateChunk(chunkId, signal);
           }}
-          onChunkLongPress={reader.openChunkDetail}
           onBackgroundClick={reader.showTranslation}
+          actionsDisabled={!canInteract}
         />
-        <ReaderHintPanel />
+        <MarginaliaPanel
+          chunks={reader.passage?.chunks ?? []}
+          focusedChunk={reader.focusedChunk}
+          chunkEvaluations={reader.chunkEvaluations}
+          onEvaluate={(chunkId, signal) => {
+            void reader.evaluateChunk(chunkId, signal);
+          }}
+          onSelectChunk={reader.focusChunk}
+          actionsDisabled={!canInteract}
+        />
       </main>
 
       <Footer
@@ -226,12 +240,6 @@ export default function App() {
           reader.awaitingStart || reader.isPaused || !reader.isReadingStarted
         }
         suspendQueued={reader.pauseAfterAction}
-      />
-
-      <ChunkDetailModal
-        chunk={reader.detailChunk}
-        visible={!!reader.detailChunk}
-        onClose={reader.closeChunkDetail}
       />
 
       <TranslationOverlay text={reader.passage?.ja ?? ''} visible={reader.translationVisible} />

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { logEncounter } from '../lib/api.js';
+import { markChunkHintSeen } from '../lib/hintStorage.js';
 import { CLOZE_PROBABILITY, READING_TIME_LIMIT_SEC, USER_ID } from '../lib/config.js';
 
 const READING_TIME_LIMIT_MS = READING_TIME_LIMIT_SEC * 1000;
@@ -11,7 +12,7 @@ const MIN_PROCESSING_MS = 400;
 
 export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePastEnd, onBeforeAdvance } = {}) {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [detailChunkId, setDetailChunkId] = useState(null);
+  const [focusedChunkId, setFocusedChunkId] = useState(null);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionDirection, setTransitionDirection] = useState(null);
   const [translationVisible, setTranslationVisible] = useState(false);
@@ -92,7 +93,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   useEffect(() => {
     currentIndexRef.current = currentIndex;
     setChunkEvaluations({});
-    setDetailChunkId(null);
+    setFocusedChunkId(null);
   }, [currentIndex]);
 
   useEffect(() => {
@@ -103,7 +104,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
       if (!isAppend) {
         setCurrentIndex(0);
         currentIndexRef.current = 0;
-        setDetailChunkId(null);
+        setFocusedChunkId(null);
         resetReadingTimer();
       }
     }
@@ -131,7 +132,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
   }, [currentIndex, passage]);
 
   const resetReaderUi = useCallback(() => {
-    setDetailChunkId(null);
+    setFocusedChunkId(null);
   }, []);
 
   const applyAfterTransition = useCallback(
@@ -401,27 +402,16 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     }
   }, [allChunksEvaluated, beginAction, canInteract, finishNextAction, releaseActionLock]);
 
-  const openChunkDetail = useCallback((chunkId) => {
-    if (!canInteract) return;
-    setDetailChunkId(chunkId);
-  }, [canInteract]);
-
-  const closeChunkDetail = useCallback(() => {
-    setDetailChunkId(null);
-  }, []);
-
-  const cycleChunkEvaluation = useCallback(
-    async (chunkId) => {
+  const focusChunk = useCallback(
+    (chunkId) => {
       if (!canInteract || !passage) return;
       if (chunkId === clozeChunkId && !clozeRevealed) {
         setClozeRevealed(true);
-        return;
       }
-      const current = chunkEvaluations[chunkId];
-      const next = !current ? 'got_it' : current === 'got_it' ? 'still_hard' : 'got_it';
-      await evaluateChunk(chunkId, next);
+      markChunkHintSeen();
+      setFocusedChunkId(chunkId);
     },
-    [canInteract, chunkEvaluations, clozeChunkId, clozeRevealed, evaluateChunk, passage],
+    [canInteract, clozeChunkId, clozeRevealed, passage],
   );
 
   useEffect(() => {
@@ -447,26 +437,26 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     const onKeyDown = (e) => {
       if (actionPendingRef.current || !canInteract) return;
       if (e.key === 'Escape') {
-        closeChunkDetail();
+        setFocusedChunkId(null);
       } else if (e.key === 't' || e.key === 'T') {
         showTranslation();
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [canInteract, closeChunkDetail, showTranslation]);
+  }, [canInteract, showTranslation]);
 
   useEffect(() => {
     return () => clearTimeout(translationTimerRef.current);
   }, []);
 
-  const detailChunk = passage?.chunks.find((c) => c.id === detailChunkId) ?? null;
+  const focusedChunk = passage?.chunks.find((c) => c.id === focusedChunkId) ?? null;
 
   return {
     passage,
     currentIndex,
-    detailChunk,
-    detailChunkId,
+    focusedChunkId,
+    focusedChunk,
     isTransitioning,
     transitionDirection,
     translationVisible,
@@ -485,9 +475,7 @@ export function useReader(passages, { passagesRef, onProgressUpdate, onAdvancePa
     pauseReading,
     prevPassage,
     handleNext,
-    cycleChunkEvaluation,
-    openChunkDetail,
-    closeChunkDetail,
+    focusChunk,
     showTranslation,
     evaluateChunk,
   };

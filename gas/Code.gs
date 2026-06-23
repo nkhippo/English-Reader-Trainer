@@ -1746,9 +1746,9 @@ function computeUnlearnedRatio_(progressMap, index, band) {
 }
 
 function passageMixForPhase_(ratio) {
-  if (ratio > 0.40) return { newCount: 3, reviewCount: 2 };
-  if (ratio >= 0.15) return { newCount: 2, reviewCount: 3 };
-  return { newCount: 1, reviewCount: 4 };
+  if (ratio > 0.40) return { newCount: 2, reviewCount: 2 };
+  if (ratio >= 0.15) return { newCount: 1, reviewCount: 2 };
+  return { newCount: 1, reviewCount: 2 };
 }
 
 function sortReviewCandidates_(items, progressMap) {
@@ -1774,7 +1774,7 @@ function selectChunksForPassage_(dueData, progressMap, index, band, excludeMap, 
   const mix = passageMixForPhase_(ratio);
   const selected = [];
   const used = {};
-  const maxNew = Math.min(mix.newCount, 3);
+  const maxNew = Math.min(mix.newCount, 2);
   let newCount = 0;
 
   function isNewChunk(item) {
@@ -1817,7 +1817,7 @@ function selectChunksForPassage_(dueData, progressMap, index, band, excludeMap, 
     newChunks.forEach(add);
   }
   if (selected.length < 2) {
-    due.slice(0, 5).forEach(add);
+    due.slice(0, 4).forEach(add);
   }
   if (selected.length < 2) {
     const templates = getPassageTemplatesForBand_(band);
@@ -1829,7 +1829,7 @@ function selectChunksForPassage_(dueData, progressMap, index, band, excludeMap, 
     }
   }
 
-  return selected.slice(0, 5);
+  return selected.slice(0, 4);
 }
 
 function chunksCacheKey_(chunks) {
@@ -2055,7 +2055,7 @@ function buildPassageUserPrompt_(chunks, band, index, revisionHint) {
   const cefrHint = band === 'A1A2' ? 'A1/A2' : band;
   const lines = [
     `CEFR band: ${cefrHint}`,
-    'Length: 4 to 7 sentences, 70 to 150 words total.',
+    'Length: 3 to 5 sentences, 50 to 100 words total.',
     '',
     'Target chunks (embed ALL of them, each at least once):',
     '',
@@ -2342,12 +2342,12 @@ function describePassageQualityFailure_(generated, chunks) {
   if (!ja) reasons.push('empty ja_translation');
 
   const sentences = text.split(/[.!?]+/).filter((s) => s.trim().length > 0);
-  if (sentences.length < 4) reasons.push('too few sentences (' + sentences.length + ')');
-  if (sentences.length > 7) reasons.push('too many sentences (' + sentences.length + ')');
+  if (sentences.length < 3) reasons.push('too few sentences (' + sentences.length + ')');
+  if (sentences.length > 5) reasons.push('too many sentences (' + sentences.length + ')');
 
   const words = text.split(/\s+/).filter(Boolean);
-  if (words.length < 60) reasons.push('too few words (' + words.length + ')');
-  if (words.length > 160) reasons.push('too many words (' + words.length + ')');
+  if (words.length < 40) reasons.push('too few words (' + words.length + ')');
+  if (words.length > 110) reasons.push('too many words (' + words.length + ')');
 
   const targets = generated?.target_chunks || [];
   const minTargets = chunks && chunks.length ? chunks.length : 2;

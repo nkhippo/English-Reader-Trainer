@@ -1,68 +1,23 @@
-import { useCallback, useRef } from 'react';
 import { useI18n } from '../i18n/I18nProvider.jsx';
 import { parsePassageText } from '../lib/passageMarkup.js';
-
-const LONG_PRESS_MS = 480;
+import { PassageGlossPane } from './PassageGlossPane.jsx';
 
 export function PassageView({
   passage,
+  focusedChunkId,
   chunkEvaluations,
   clozeChunkId,
   clozeRevealed,
   isTransitioning,
   transitionDirection,
   canInteract,
+  showInteractionHint,
   onChunkTap,
-  onChunkLongPress,
+  onEvaluate,
   onBackgroundClick,
+  actionsDisabled,
 }) {
   const { t } = useI18n();
-  const pressTimerRef = useRef(null);
-  const longPressTriggeredRef = useRef(false);
-  const activePointerRef = useRef(null);
-
-  const clearPressTimer = useCallback(() => {
-    if (pressTimerRef.current) {
-      clearTimeout(pressTimerRef.current);
-      pressTimerRef.current = null;
-    }
-  }, []);
-
-  const handleChunkPointerDown = useCallback((e, chunkId) => {
-    if (!canInteract) return;
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-
-    clearPressTimer();
-    activePointerRef.current = e.pointerId;
-    longPressTriggeredRef.current = false;
-    e.currentTarget.setPointerCapture(e.pointerId);
-
-    pressTimerRef.current = setTimeout(() => {
-      longPressTriggeredRef.current = true;
-      onChunkLongPress(chunkId);
-    }, LONG_PRESS_MS);
-  }, [canInteract, clearPressTimer, onChunkLongPress]);
-
-  const handleChunkPointerUp = useCallback((e, chunkId) => {
-    if (activePointerRef.current !== e.pointerId) return;
-
-    clearPressTimer();
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    }
-    activePointerRef.current = null;
-
-    if (!longPressTriggeredRef.current) {
-      onChunkTap(chunkId);
-    }
-  }, [clearPressTimer, onChunkTap]);
-
-  const handleChunkPointerCancel = useCallback((e) => {
-    if (activePointerRef.current !== e.pointerId) return;
-    clearPressTimer();
-    activePointerRef.current = null;
-    longPressTriggeredRef.current = false;
-  }, [clearPressTimer]);
 
   if (!passage) return null;
 
@@ -70,6 +25,7 @@ export function PassageView({
   const transitionClass = isTransitioning
     ? `passage-area--exit-${transitionDirection}`
     : '';
+  const focusedChunk = passage.chunks.find((c) => c.id === focusedChunkId) ?? null;
 
   return (
     <section className={`reader__passage ${transitionClass}`}>
@@ -80,6 +36,9 @@ export function PassageView({
           onBackgroundClick();
         }}
       >
+        {showInteractionHint ? (
+          <p className="passage-interaction-hint">{t.chunkInteractionHint}</p>
+        ) : null}
         <p>
           {segments.map((seg) => {
             if (seg.type !== 'chunk') {
@@ -92,22 +51,29 @@ export function PassageView({
               : evaluation === 'still_hard'
                 ? 'chunk--evaluated-hold'
                 : 'chunk--unevaluated';
+            const focusedClass = focusedChunkId === seg.chunk.id ? 'chunk--focused' : '';
             return (
               <mark
                 key={seg.key}
-                className={`chunk ${isCloze ? 'chunk--cloze' : ''} ${evalClass}`}
+                className={`chunk ${focusedClass} ${isCloze ? 'chunk--cloze' : ''} ${evalClass}`}
                 aria-label={isCloze ? t.clozeReveal : undefined}
-                onPointerDown={(e) => handleChunkPointerDown(e, seg.chunk.id)}
-                onPointerUp={(e) => handleChunkPointerUp(e, seg.chunk.id)}
-                onPointerCancel={handleChunkPointerCancel}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onChunkTap(seg.chunk.id);
+                }}
               >
                 {isCloze ? '___' : (seg.displayText || seg.chunk.text)}
               </mark>
             );
           })}
         </p>
-        <p className="passage-interaction-hint">{t.chunkInteractionHint}</p>
       </article>
+      <PassageGlossPane
+        focusedChunk={focusedChunk}
+        chunkEvaluations={chunkEvaluations}
+        onEvaluate={onEvaluate}
+        actionsDisabled={actionsDisabled}
+      />
     </section>
   );
 }

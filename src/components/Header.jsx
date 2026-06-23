@@ -1,38 +1,62 @@
+import { useState } from 'react';
 import { CefrPicker } from './CefrPicker.jsx';
+import { CombinedProgress } from './CombinedProgress.jsx';
+import { ReaderMenu } from './ReaderMenu.jsx';
 import { useI18n } from '../i18n/I18nProvider.jsx';
-
-function BandProgress({ label, current, total, variant }) {
-  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
-  const fillWidth = total > 0 ? Math.min(100, (current / total) * 100) : 0;
-
-  return (
-    <div className="band-progress" role="group" aria-label={`${label} ${pct}%`}>
-      <div className="band-progress__meta">
-        <span className="band-progress__label">{label}</span>
-        <span className="band-progress__nums">
-          {current.toLocaleString()} / {total.toLocaleString()}
-        </span>
-        <span className="band-progress__pct">{pct}%</span>
-      </div>
-      <div className="band-progress__track" aria-hidden="true">
-        <div
-          className={`band-progress__fill band-progress__fill--${variant}`}
-          style={{ width: `${fillWidth}%` }}
-        />
-      </div>
-    </div>
-  );
-}
+import { bandLabel } from '../lib/cefr.js';
 
 export function Header({
+  compact = false,
   cefrBand,
   onCefrChange,
   reviewing = 0,
   graduated = 0,
   total = 0,
   encountered = 0,
+  remainingSeconds,
+  showTimer = false,
 }) {
   const { locale, setLocale, t } = useI18n();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  if (compact) {
+    return (
+      <>
+        <header className="header header--compact">
+          <button
+            type="button"
+            className="header__menu-btn"
+            onClick={() => setMenuOpen(true)}
+            aria-label={t.readerMenuOpen}
+            aria-expanded={menuOpen}
+          >
+            ≡
+          </button>
+          <span className="header__band">{bandLabel(cefrBand)}</span>
+          {showTimer ? (
+            <span className="header__timer" role="timer" aria-live="off">
+              {t.timeRemainingShort(remainingSeconds)}
+            </span>
+          ) : (
+            <span className="header__timer header__timer--placeholder" aria-hidden="true" />
+          )}
+        </header>
+        <ReaderMenu
+          open={menuOpen}
+          onClose={() => setMenuOpen(false)}
+          cefrBand={cefrBand}
+          onCefrChange={(band) => {
+            onCefrChange(band);
+            setMenuOpen(false);
+          }}
+          reviewing={reviewing}
+          graduated={graduated}
+          total={total}
+          encountered={encountered}
+        />
+      </>
+    );
+  }
 
   return (
     <header className="header">
@@ -67,20 +91,7 @@ export function Header({
           </div>
         </div>
       </div>
-      <div className="header__progress">
-        <BandProgress
-          label={t.progressFirstExposure}
-          current={encountered}
-          total={total}
-          variant="exposure"
-        />
-        <BandProgress
-          label={t.progressGraduation}
-          current={graduated}
-          total={total}
-          variant="graduation"
-        />
-      </div>
+      <CombinedProgress encountered={encountered} graduated={graduated} total={total} />
     </header>
   );
 }
