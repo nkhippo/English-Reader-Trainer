@@ -3,7 +3,7 @@
 > **最終更新:** 2026-06-22  
 > **ソース:** `gas/Code.gs`（コミット `5750e20` 以降）
 
-**GAS Web App:** `https://script.google.com/macros/s/AKfycbykjMC8q0FQ5gipKeQ-4H6bjzPEXMPKMVeNLWr03PzLg1cLWXdxT-A-oTxLXA8eFaVz/exec`
+**GAS Web App:** `https://script.google.com/macros/s/AKfycbzhOb86kIxzsO4I7237XmZz24mCQWc-VpRFzoF7J2ILhwUUruN4Melw2XaTJwo9vTEf/exec`
 
 ---
 
