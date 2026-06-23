@@ -12,7 +12,7 @@
 | [claude-api.md](./claude-api.md) | Claude モデル・プロンプト・検証 |
 | [claude-api-token-usage.md](./claude-api-token-usage.md) | トークン計測・コスト |
 | 公開アプリ | https://nkhippo.github.io/English-Reader-Trainer/ |
-| GAS Web App | `https://script.google.com/macros/s/AKfycbzhOb86kIxzsO4I7237XmZz24mCQWc-VpRFzoF7J2ILhwUUruN4Melw2XaTJwo9vTEf/exec` |
+| GAS Web App | `https://script.google.com/macros/s/AKfycbwXld2V3mkwok107wvmMP9LwCUkggE1YuZurpQnUna3w1oIBfzVEsGBxPk7rj3h04zP/exec` |
 
 ---
 
